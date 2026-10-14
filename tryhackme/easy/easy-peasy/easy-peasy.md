@@ -4,7 +4,6 @@
 **Dificultad:** Fácil
 **Categorías:** Reconocimiento de red, enumeración web, criptografía
 básica, esteganografía, escalada de privilegios en Linux
-**Tiempo invertido:** ~5 horas, distribuidas en 3 días
 **Herramientas:** Nmap, Gobuster, curl, CyberChef, John the Ripper,
 steghide, SSH
 
