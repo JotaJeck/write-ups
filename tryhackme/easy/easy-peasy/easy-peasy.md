@@ -20,6 +20,7 @@ steghide, SSH
 8. [Escalada de privilegios](#7-escalada-de-privilegios)
 9. [Lecciones aprendidas](#lecciones-aprendidas)
 10. [Mitigaciones](#mitigaciones-perspectiva-defensiva)
+11. [Referencias](#referencias)
 
 ## Resumen
 
@@ -220,3 +221,10 @@ la lectura directa confirmó la escalada de privilegios.
   metadatos de páginas web.
 - Usar algoritmos de hash modernos con sal (no GOST ni MD5) para
   almacenamiento de contraseñas.
+
+## Referencias
+
+- [TryHackMe — Easy Peasy](https://tryhackme.com/room/easypeasy)
+- [CyberChef](https://gchq.github.io/CyberChef/)
+- [GTFOBins — Linux binaries that can bypass local security restrictions](https://gtfobins.github.io/)
+- [CVE-2018-16860 — CUPS local privilege escalation (NVD)](https://nvd.nist.gov/vuln/detail/CVE-2018-16860)
