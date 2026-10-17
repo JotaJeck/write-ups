@@ -23,6 +23,7 @@ Cada write-up sigue una estructura consistente:
 | [Easy Peasy](tryhackme/easy/easy-peasy/) | Fácil | Nmap, Gobuster, hashes, esteganografía, cron privesc |
 | [Simple CTF](tryhackme/easy/simple-ctf/) | Fácil | Nmap, Gobuster, SQLi CVE-2019-9053, sudo vim privesc |
 | [Bounty Hacker](tryhackme/easy/bounty-hacker/) | Fácil | Nmap, FTP anónimo, Hydra, sudo tar privesc |
+| [Pickle Rick](tryhackme/easy/pickle-rick/) | Fácil | Nmap, código fuente HTML, RCE command injection, sudo ALL |
 
 ## Herramientas
 
