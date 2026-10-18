@@ -25,8 +25,9 @@ Cada write-up sigue una estructura consistente:
 | [Bounty Hacker](tryhackme/easy/bounty-hacker/) | Fácil | Nmap, FTP anónimo, Hydra, sudo tar privesc |
 | [Pickle Rick](tryhackme/easy/pickle-rick/) | Fácil | Nmap, código fuente HTML, RCE command injection, sudo ALL |
 | [RootMe](tryhackme/easy/rootme/) | Fácil | Nmap -Pn, Gobuster, reverse shell PHP, bypass extensiones, SUID python privesc |
+| [Kenobi](tryhackme/easy/kenobi/) | Fácil | Nmap, SMB, NFS, ProFTPD mod_copy CVE-2015-3306, PATH hijacking privesc |
 
 ## Herramientas
 
 Nmap, Gobuster, curl, CyberChef, John the Ripper, steghide, SSH,
-Python 3, ftp, Hydra, netcat
+Python 3, ftp, Hydra, netcat, smbclient, searchsploit
