@@ -1,36 +1,26 @@
 # Bounty Hacker — TryHackMe (Fácil)
 
-**Plataforma:** TryHackMe
-**Dificultad:** Fácil
-**Categorías:** Reconocimiento de red, FTP anónimo, fuerza bruta de
-credenciales, escalada de privilegios en Linux
-**Tiempo invertido:** ~30 minutos
-**Herramientas:** Nmap, ftp, Hydra, SSH
+**Plataforma:** TryHackMe · **Categoría:** Reconocimiento / FTP / Fuerza bruta / PrivEsc · **Herramientas:** Nmap, ftp, Hydra, SSH, tar
 
-## Índice
-
-1. [Resumen](#resumen)
-2. [Reconocimiento](#1-reconocimiento)
-3. [Acceso FTP anónimo](#2-acceso-ftp-anónimo)
-4. [Fuerza bruta con Hydra](#3-fuerza-bruta-con-hydra)
-5. [Acceso por SSH](#4-acceso-por-ssh)
-6. [Escalada de privilegios](#5-escalada-de-privilegios)
-7. [Lecciones aprendidas](#lecciones-aprendidas)
-8. [Mitigaciones](#mitigaciones-perspectiva-defensiva)
-9. [Referencias](#referencias)
+---
 
 ## Resumen
 
-Bounty Hacker es una máquina Linux con tres servicios expuestos: FTP,
-SSH y HTTP. El servidor FTP permite acceso anónimo y expone una lista
-de tareas con el nombre del autor y una wordlist de contraseñas. Con
-esos datos se realiza fuerza bruta contra SSH con Hydra para obtener
-acceso inicial. La escalada de privilegios se logra mediante un
-permiso de sudo mal configurado sobre `tar`.
+Máquina Linux con FTP, SSH y HTTP. El servidor FTP permite acceso anónimo y expone dos archivos: una lista de tareas firmada con un nombre de usuario y una wordlist de contraseñas. Con esos datos se realiza fuerza bruta contra SSH con Hydra. La escalada de privilegios se logra mediante un permiso sudo mal configurado sobre `tar`, que permite ejecutar comandos arbitrarios como root.
+
+---
+
+## Habilidades demostradas
+
+- Escaneo de puertos y detección de servicios con Nmap (`-sC -sV`)
+- Identificación de FTP anónimo desde los scripts de Nmap
+- Acceso FTP anónimo y descarga de archivos
+- Fuerza bruta de credenciales SSH con Hydra (`-l`, `-P`)
+- Escalada de privilegios mediante `sudo tar` con `--checkpoint-action` (GTFOBins)
+
+---
 
 ## 1. Reconocimiento
-
-Escaneo de puertos con detección de versiones:
 
 ```bash
 nmap -sC -sV <IP>
@@ -38,19 +28,15 @@ nmap -sC -sV <IP>
 
 | Puerto | Servicio | Versión |
 |--------|----------|---------|
-| 21 | FTP | vsftpd 3.0.5 |
-| 22 | SSH | OpenSSH 8.2p1 Ubuntu |
-| 80 | HTTP | Apache 2.4.41 (Ubuntu) |
+| 21     | FTP      | vsftpd 3.0.5 |
+| 22     | SSH      | OpenSSH 8.2p1 Ubuntu |
+| 80     | HTTP     | Apache 2.4.41 (Ubuntu) |
 
-El escaneo reveló un detalle crítico en el puerto 21: ftp-anon: Anonymous FTP login allowed
+Los scripts de Nmap (`-sC`) revelaron directamente el detalle crítico: `ftp-anon: Anonymous FTP login allowed`. No fue necesario probarlo manualmente — Nmap lo detectó solo.
 
+---
 
-Esto indica que el servidor FTP acepta conexiones sin credenciales,
-usando el usuario especial `anonymous`.
-
-## 2. Acceso FTP anónimo
-
-Conexión al servidor FTP sin credenciales:
+## 2. Enumeración — FTP anónimo
 
 ```bash
 ftp <IP>
@@ -58,140 +44,107 @@ ftp <IP>
 # Password: (Enter)
 ```
 
-Listado de archivos disponibles:
-
 ```bash
 ls
-```
-
-Se encontraron dos archivos: `task.txt` y `locks.txt`. Descarga de
-ambos:
-
-```bash
 get task.txt
 get locks.txt
 bye
 ```
 
-**Contenido de `task.txt`:** una lista de tareas firmada al final con
-un nombre de usuario — el autor de la lista.
+Dos archivos:
 
-**Contenido de `locks.txt`:** una lista de 26 contraseñas con
-variaciones de mayúsculas, números y símbolos especiales. Es una
-wordlist personalizada, equivalente a un subconjunto de `rockyou.txt`
-pero enfocado en un patrón específico.
+- **`task.txt`**: lista de tareas firmada al final con un nombre de usuario — el autor de la lista.
+- **`locks.txt`**: wordlist de 26 contraseñas con variaciones de mayúsculas, números y símbolos. Una wordlist personalizada enfocada en un patrón específico, más pequeña que rockyou.txt pero diseñada para este objetivo.
 
-## 3. Fuerza bruta con Hydra
+---
 
-Con el usuario encontrado en `task.txt` y la wordlist de `locks.txt`,
-se realizó fuerza bruta contra el servicio SSH:
+## 3. Explotación / Acceso inicial
+
+Con el usuario de `task.txt` y la wordlist de `locks.txt`, fuerza bruta contra SSH:
 
 ```bash
-hydra -l <usuario> -P locks.txt ssh://<IP>
+hydra -l lin -P locks.txt ssh://<IP>
 ```
 
 | Opción | Significado |
 |--------|-------------|
-| `-l <usuario>` | Un solo usuario a probar (minúscula = usuario único) |
-| `-P locks.txt` | Wordlist de contraseñas (mayúscula = lista de contraseñas) |
+| `-l lin` | Usuario único (minúscula = un solo usuario) |
+| `-P locks.txt` | Lista de contraseñas (mayúscula = wordlist) |
 | `ssh://<IP>` | Servicio y dirección objetivo |
 
-Hydra probó las 26 contraseñas de la lista y encontró la correcta
-en segundos, devolviendo el par usuario:contraseña válido.
+![Hydra encontrando credenciales SSH](img/01-hydra-cracked.png)
 
-**Por qué SSH y no FTP o HTTP:** el archivo `task.txt` sugería un
-usuario de sistema Linux (nombre corto, sin dominio), lo que apunta
-a SSH como el servicio de acceso principal. FTP ya estaba abierto
-de forma anónima, y HTTP no suele aceptar credenciales de sistema.
+Hydra probó las 26 contraseñas en segundos y devolvió las credenciales válidas.
 
-## 4. Acceso por SSH
+Acceso SSH:
 
 ```bash
-ssh <usuario>@<IP>
+ssh lin@<IP>
 ```
 
-Una vez dentro, verificación estándar:
+La flag de usuario estaba en `~/Desktop/user.txt`.
 
-```bash
-whoami
-ls
-cat user.txt
-```
+---
 
-La flag de usuario estaba en el escritorio (`~/Desktop/user.txt`),
-legible directamente.
-
-## 5. Escalada de privilegios
-
-Verificación de permisos de sudo:
+## 4. Escalada de privilegios
 
 ```bash
 sudo -l
 ```
 
-Resultado: (root) /bin/tar
+Resultado: `(root) /bin/tar`
 
-
-El usuario tiene permiso para ejecutar `tar` como root sin contraseña.
-`tar` es una herramienta de compresión de archivos, pero incluye las
-opciones `--checkpoint` y `--checkpoint-action`, diseñadas para
-ejecutar comandos automáticamente durante el procesamiento de archivos.
-Con sudo, esos comandos heredan los privilegios de root.
+El usuario puede ejecutar `tar` como root sin contraseña. `tar` incluye las opciones `--checkpoint` y `--checkpoint-action`, diseñadas para ejecutar comandos durante el procesamiento de archivos. Con sudo, esos comandos heredan privilegios de root:
 
 ```bash
 sudo tar -cf /dev/null /dev/null --checkpoint=1 --checkpoint-action=exec=/bin/bash
 ```
 
 | Parte | Significado |
-|--------|-------------|
-| `sudo tar` | Ejecuta tar con privilegios de root |
-| `-cf /dev/null /dev/null` | Operación ficticia: crea un archivo vacío, solo para que tar tenga algo que procesar |
-| `--checkpoint=1` | Ejecuta la acción en cada archivo procesado (inmediatamente) |
-| `--checkpoint-action=exec=/bin/bash` | La acción: lanzar una shell bash, que hereda los privilegios de root |
+|-------|-------------|
+| `-cf /dev/null /dev/null` | Operación ficticia: algo que tar procese inmediatamente |
+| `--checkpoint=1` | Ejecutar la acción en cada archivo procesado |
+| `--checkpoint-action=exec=/bin/bash` | La acción: lanzar bash, que hereda los privilegios de root |
 
-Confirmación:
-```bash
-whoami
-# root
+![sudo tar abriendo shell de root](img/05-sudo-tar-root.png)
 
-cat /root/root.txt
-```
+Root flag en `/root/root.txt`.
+
+---
+
+## Lo que probé y no funcionó
+
+- **Primer intento de tar con typo**: ejecuté el comando con `/bin/b` en lugar de `/bin/bash` — el comando quedó cortado al escribirlo. Falló con `/bin/sh: /bin/b: not found`. La segunda ejecución con la ruta completa funcionó.
+- **Por qué SSH y no FTP o HTTP**: el nombre en `task.txt` era un usuario corto de sistema Linux, lo que apunta a SSH como servicio de acceso. FTP ya estaba abierto de forma anónima y HTTP no acepta credenciales de sistema.
+
+---
+
+## Impacto
+
+FTP anónimo expuso directamente el nombre de usuario y una wordlist específica para él — información suficiente para comprometer SSH sin ningún conocimiento previo del sistema. Desde SSH, la escalada a root toma una línea de comando. No se requiere ninguna CVE, código personalizado ni interacción del usuario.
+
+---
+
+## Perspectiva defensiva
+
+- **Deshabilitar FTP anónimo**: si no es estrictamente necesario, eliminar. Si lo es, restringir a una carpeta sin archivos sensibles y sin información de usuarios o contraseñas.
+- **No almacenar wordlists ni datos de usuarios en servidores accesibles**: `locks.txt` era esencialmente la clave del sistema expuesta públicamente.
+- **Principio de mínimo privilegio en sudo**: `tar` con `--checkpoint-action` es escalada directa a root (GTFOBins). Antes de otorgar sudo sobre cualquier binario, revisar si aparece en GTFOBins.
+- **Contraseñas robustas y únicas**: una wordlist de 26 entradas basada en variaciones de una misma palabra fue suficiente. Una contraseña generada aleatoriamente no aparece en ninguna wordlist.
+
+---
 
 ## Lecciones aprendidas
 
-- El acceso FTP anónimo es una configuración legítima para
-  distribución de archivos públicos, pero en servidores mal
-  configurados puede exponer información sensible como usuarios
-  y contraseñas.
-- Hydra automatiza la fuerza bruta de credenciales contra servicios
-  de red. La distinción `-l` (usuario único) vs `-L` (lista de
-  usuarios) y `-p` (contraseña única) vs `-P` (lista de contraseñas)
-  es fundamental para usarlo correctamente.
-- `tar`, como `vim` en salas anteriores, es un ejemplo de binario
-  que puede usarse para escalar privilegios cuando tiene permiso de
-  sudo. GTFOBins documenta decenas de casos similares.
-- La wordlist no tiene que ser `rockyou.txt`: en esta sala la
-  wordlist estaba en el propio servidor, personalizada para el
-  usuario objetivo. En pentesting real, generar wordlists
-  específicas basadas en información del objetivo (nombre, empresa,
-  fechas) aumenta significativamente la tasa de éxito.
+- `-sC` en Nmap corre scripts de reconocimiento automáticamente — en este caso detectó FTP anónimo sin necesidad de probarlo a mano.
+- La distinción `-l`/`-L` y `-p`/`-P` en Hydra es fundamental: minúscula = valor único, mayúscula = lista.
+- La wordlist no tiene que ser rockyou.txt. Una lista de 26 entradas personalizada para el objetivo es más eficiente y rápida que millones de entradas genéricas.
+- `tar`, como `vim` en salas anteriores, permite escalar privilegios cuando tiene sudo. GTFOBins cubre decenas de binarios con el mismo patrón — siempre consultarlo antes de buscar técnicas más complejas.
 
-## Mitigaciones (perspectiva defensiva)
-
-- Deshabilitar el acceso FTP anónimo si no es estrictamente
-  necesario, o restringirlo a una carpeta específica sin archivos
-  sensibles.
-- No almacenar listas de contraseñas ni información de usuarios
-  en servidores accesibles públicamente.
-- Auditar los permisos de sudo: `tar` no debería tener permiso de
-  sudo para usuarios no privilegiados. Revisar GTFOBins antes de
-  otorgar sudo sobre cualquier binario.
-- Usar contraseñas que no sean variaciones predecibles de una
-  misma palabra base — una wordlist de 26 entradas fue suficiente
-  para crackearla en segundos.
+---
 
 ## Referencias
 
-- [TryHackMe — Bounty Hacker](https://tryhackme.com/room/cowboyhacker)
 - [GTFOBins — tar](https://gtfobins.github.io/gtfobins/tar/)
 - [Hydra](https://github.com/vanhauser-thc/thc-hydra)
+- [TryHackMe — Bounty Hacker](https://tryhackme.com/room/cowboyhacker)
