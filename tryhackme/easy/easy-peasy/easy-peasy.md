@@ -4,6 +4,8 @@
 
 ---
 
+> **Nota:** Las capturas son de distintas sesiones porque la máquina se reinició durante el proceso. Las IP y fechas cambian entre imágenes — el flujo de ataque es el mismo.
+
 ## Resumen
 
 Máquina Linux con dos servidores web y SSH en puerto no estándar. El camino de ataque es una cadena de pistas progresivas: texto oculto en HTML, encodings poco comunes (Base62, GOST), esteganografía en una imagen JPEG, y finalmente escalada de privilegios mediante un script cron mal configurado con permisos de escritura para cualquier usuario.
@@ -95,9 +97,9 @@ En `/hidden/whatever/` había otro elemento `hidden` en el HTML con una cadena e
 
 ### Cracking del hash GOST
 
-En `/n0th1ng3ls3m4tt3r/` el HTML referenciaba una imagen (`binarycodepixabay.jpg`) y mostraba un hash de 64 caracteres:
+En `/n0th1ng3ls3m4tt3r/` el HTML referenciaba una imagen (`binarycodepixabay.jpg`) y mostraba un hash de 64 caracteres hexadecimales.
 
-La longitud sugiere SHA-256, pero John the Ripper con `rockyou.txt` y formato `Raw-SHA256` no encontró nada — señal de que el algoritmo estaba mal identificado. La sala indicaba que era **GOST** (GOST R 34.11-94), un algoritmo ruso que coincide en longitud de salida con SHA-256 pero es completamente distinto:
+La longitud sugiere SHA-256, pero John con `--format=Raw-SHA256` y `rockyou.txt` no encontró nada — señal de que el algoritmo estaba mal identificado. La sala indicaba que era **GOST** (GOST R 34.11-94), un algoritmo ruso que coincide en longitud de salida con SHA-256 pero es completamente distinto. Con la wordlist personalizada de la sala (`easypeasy.txt`) y el formato correcto:
 
 ```bash
 john --format=gost --wordlist=/root/easypeasy.txt hash3.txt
@@ -173,10 +175,15 @@ Root flag obtenida.
 
 ## Lo que probé y no funcionó
 
-- **John con SHA-256 contra `rockyou.txt`**: el hash tenía 64 caracteres, lo que inmediatamente sugiere SHA-256. John con `--format=Raw-SHA256` y `rockyou.txt` completo (14M entradas) no produjo ningún resultado — señal de que el algoritmo estaba mal identificado. El algoritmo real era GOST.
-- **John con GOST y `easypeasy.txt`**: la wordlist personalizada de la sala tampoco crackeó el hash. Funcionó solo con `rockyou.txt`.
+- **John con SHA-256 contra `rockyou.txt`**: el hash tenía 64 caracteres, lo que inmediatamente sugiere SHA-256. John con `--format=Raw-SHA256` y `rockyou.txt` completo (14M entradas) no produjo ningún resultado — señal de que el algoritmo estaba mal identificado. El algoritmo real era GOST, y la contraseña sí estaba en `easypeasy.txt` con el formato correcto.
 - **wget de la imagen desde la raíz del Apache**: el primer intento fue `wget http://<IP>:65524/binarycodepixabay.jpg` → 404. La imagen estaba dentro del subdirectorio `/n0th1ng3ls3m4tt3r/`, ruta que se obtuvo decodificando el Base62.
-- **Copiar flag a `/tmp`**: el primer enfoque fue inyectar `cat /root/root.txt > /tmp/root_flag.txt; chmod 777 /tmp/root_flag.txt`. El archivo aparecía vacío, probablemente por una condición de carrera entre la escritura del script y la ejecución del cron. Cambiar permisos directamente fue más confiable.
+- **Copiar flag a `/tmp`**: el primer enfoque fue inyectar `cat /root/root.txt > /tmp/root_flag.txt; chmod 777 /tmp/root_flag.txt`. El archivo aparecía vacío. No investigué la causa exacta — puede ser que el comando se pegara al final de la línea anterior del script si este no terminaba con salto de línea, o algún otro problema de timing. Cambiar permisos directamente fue más confiable y evitó el problema.
+
+---
+
+## Impacto
+
+Un usuario sin privilegios llega a root en menos de un minuto. El vector no requiere explotar ninguna CVE ni desarrollar código: basta con escribir una línea en un script que root ya ejecuta. Cualquier otro usuario del sistema, o un atacante que haya obtenido acceso con credenciales bajas (como las que se extraen por esteganografía en este caso), puede completar la escalada sin herramientas especiales.
 
 ---
 
