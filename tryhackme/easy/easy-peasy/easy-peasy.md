@@ -1,229 +1,206 @@
 # Easy Peasy — TryHackMe (Fácil)
 
-**Plataforma:** TryHackMe
-**Dificultad:** Fácil
-**Categorías:** Reconocimiento de red, enumeración web, criptografía
-básica, esteganografía, escalada de privilegios en Linux
-**Herramientas:** Nmap, Gobuster, curl, CyberChef, John the Ripper,
-steghide, SSH
+**Plataforma:** TryHackMe · **Categoría:** Reconocimiento / Web / Criptografía / Esteganografía / PrivEsc · **Herramientas:** Nmap, Gobuster, curl, CyberChef, John the Ripper, steghide, SSH
 
-## Índice
-
-1. [Resumen](#resumen)
-2. [Reconocimiento](#1-reconocimiento)
-3. [Enumeración web](#2-enumeración-web)
-4. [Contenido oculto en el código fuente](#3-contenido-oculto-en-el-código-fuente)
-5. [Hash y cracking](#4-hash-y-cracking)
-6. [Esteganografía](#5-esteganografía)
-7. [Acceso por SSH](#6-acceso-por-ssh)
-8. [Escalada de privilegios](#7-escalada-de-privilegios)
-9. [Lecciones aprendidas](#lecciones-aprendidas)
-10. [Mitigaciones](#mitigaciones-perspectiva-defensiva)
-11. [Referencias](#referencias)
+---
 
 ## Resumen
 
-Easy Peasy es una máquina Linux con dos servidores web, un servicio
-SSH en puerto no estándar, y una cadena de pistas progresivas (texto
-oculto, codificaciones, un hash poco común, esteganografía en una
-imagen) que termina en una escalada de privilegios real mediante una
-tarea cron mal configurada.
+Máquina Linux con dos servidores web y SSH en puerto no estándar. El camino de ataque es una cadena de pistas progresivas: texto oculto en HTML, encodings poco comunes (Base62, GOST), esteganografía en una imagen JPEG, y finalmente escalada de privilegios mediante un script cron mal configurado con permisos de escritura para cualquier usuario.
+
+---
+
+## Habilidades demostradas
+
+- Escaneo completo de puertos con Nmap (`-p-`) para descubrir servicios en puertos altos
+- Enumeración de directorios web con Gobuster sobre múltiples puertos y rutas anidadas
+- Identificación y extracción de contenido oculto en HTML con `curl`
+- Identificación de encoding Base62 y decodificación con CyberChef
+- Cracking de hash GOST (algoritmo no estándar) con John the Ripper
+- Extracción de datos esteganográficos con steghide
+- Decodificación de binario a texto (credenciales SSH)
+- Escalada de privilegios mediante script cron escribible ejecutado como root
+
+---
 
 ## 1. Reconocimiento
 
-Escaneo completo de puertos, porque un escaneo por defecto solo
-revisa los 1000 puertos más comunes y aquí uno de los servicios
-usaba un puerto alto:
+Un escaneo por defecto de Nmap solo revisa los 1000 puertos más comunes. Aquí SSH estaba en el puerto 6498 y Apache en el 65524 — ambos habrían quedado fuera sin un escaneo completo:
 
 ```bash
 nmap -p- <IP>
-```
-
-Resultado: 3 puertos abiertos.
-
-```bash
 nmap -sV -p 80,6498,65524 <IP>
 ```
 
-| Puerto | Servicio | Detalle |
-|--------|----------|---------|
-| 80     | http     | nginx |
-| 6498   | ssh      | OpenSSH |
-| 65524  | http     | Apache |
+![Nmap con versiones de servicios](img/02-nmap-versions.png)
 
-SSH en un puerto fuera del estándar (22) es una práctica común para
-reducir el ruido de escaneos automáticos, aunque no resiste un
-escaneo completo de puertos como el de arriba.
+| Puerto | Servicio | Versión |
+|--------|----------|---------|
+| 80     | HTTP     | nginx 1.16.1 |
+| 6498   | SSH      | OpenSSH 7.6p1 |
+| 65524  | HTTP     | Apache 2.4.43 |
+
+SSH en un puerto fuera del estándar reduce el ruido de escaneos automáticos, pero no resiste un `-p-`.
+
+---
 
 ## 2. Enumeración web
 
-Enumeración de directorios con Gobuster sobre ambos servidores:
+Con dos servidores HTTP activos, enumeré directorios en ambos:
 
 ```bash
 gobuster dir -u http://<IP>:65524 -w /usr/share/wordlists/dirb/common.txt
+gobuster dir -u http://<IP> -w /usr/share/wordlists/dirb/common.txt
 ```
 
-En el nginx (puerto 80), `robots.txt` contenía un hash de 32
-caracteres hexadecimales. Por su longitud, la hipótesis inicial fue
-MD5, confirmada con `md5sum`.
+![Gobuster en puerto 65524](img/05-gobuster-65524.png)
 
-Con la lista `common.txt` no apareció todo: en el Apache, un segundo
-Gobuster contra un subdirectorio, esta vez con la lista `big.txt`,
-reveló una carpeta adicional que la lista corta no había encontrado.
-Lección: una lista de palabras corta puede dar una falsa sensación de
-que "no hay nada más".
+En el Apache (65524), `robots.txt` contenía un hash de 32 caracteres hexadecimales y en el HTML de la página principal había una flag visible leyendo el código fuente.
 
-## 3. Contenido oculto en el código fuente
+![robots.txt con hash MD5](img/06-robots-txt.png)
 
-El navegador no mostraba nada en varias páginas, pero el HTML sí
-tenía contenido: texto marcado con la etiqueta `hidden`, que un
-navegador respeta pero que sigue presente en el código.
+El hash de 32 chars era MD5, confirmado con `echo -n 'flag{...}' | md5sum`.
+
+En el nginx (80), Gobuster con `common.txt` encontró `/hidden`. Al enumerar `/hidden/` con la lista más grande `big.txt`, apareció `/whatever`:
 
 ```bash
-curl -s http://<IP>:PUERTO/ | grep -i hidden
+gobuster dir -u http://<IP>/hidden/ -w /usr/share/wordlists/dirb/big.txt
 ```
 
-Un hallazgo decía "encoded with ba....", seguido de una cadena
-alfanumérica. Por el conjunto de caracteres (sin símbolos `+`, `/`
-ni `=`) y comprobando que el resultado decodificado coincidía en
-longitud con el formato de respuesta esperado por la sala, se
-identificó como **base62** en lugar del más común base64, y se
-decodificó con CyberChef (`From Base62`).
+![Gobuster en puerto 80 encontrando /hidden](img/08-gobuster-80.png)
 
-Otra flag apareció directamente en el HTML de una de las páginas,
-visible solo leyendo el código fuente completo, no la página
-renderizada.
+**Lección**: una lista corta puede dar falsa sensación de "no hay nada más". Cuando un directorio parece vacío pero tiene sentido que contenga algo, vale la pena probar con `big.txt`.
 
-## 4. Hash y cracking
+---
 
-Un hash de 64 caracteres apareció en otra página. El supuesto
-inicial, por longitud, fue SHA-256 — resultó ser **incorrecto**.
-`rockyou.txt` completo (14M+ entradas) no produjo ningún resultado
-contra el formato SHA-256, lo cual era en sí mismo la señal de que
-el formato estaba mal identificado.
+## 3. Explotación / Acceso inicial
 
-La propia tarea de la sala especificaba el algoritmo real: **GOST**
-(GOST R 34.11-94), un algoritmo que coincide en longitud de salida
-con SHA-256 pero es completamente distinto.
+### Contenido oculto en HTML
+
+Varias páginas no mostraban nada en el navegador, pero el HTML sí tenía contenido marcado con el atributo `hidden`. `curl` lo muestra sin filtrar:
 
 ```bash
-john --format=gost --wordlist=<wordlist_de_la_sala> hash.txt
+curl -s http://<IP>:65524/ | grep -i -E "flag|hidden"
 ```
 
-**Lección clave: la longitud de un hash es una pista, no una prueba.**
-Dos algoritmos distintos pueden producir salidas del mismo tamaño.
+![curl mostrando contenido Base62 oculto](img/13-curl-base62.png)
 
-## 5. Esteganografía
+El texto decía "encoded with ba...." seguido de una cadena alfanumérica sin `+`, `/` ni `=`. El conjunto de caracteres apuntaba a **Base62** en lugar del más común Base64. Decodificado con CyberChef → `From Base62`:
 
-Una imagen en una de las páginas sugería contenido oculto. Se
-descargó y se analizó con steghide, usando la contraseña recuperada
-del hash GOST:
+![CyberChef decodificando Base62](img/14-cyberchef-base62.png)
+
+El resultado era la ruta `/n0th1ng3ls3m4tt3r` — un subdirectorio en el servidor Apache.
+
+En `/hidden/whatever/` había otro elemento `hidden` en el HTML con una cadena en Base64, que decodificada con `echo "..." | base64 -d` revelaba una flag adicional.
+
+### Cracking del hash GOST
+
+En `/n0th1ng3ls3m4tt3r/` el HTML referenciaba una imagen (`binarycodepixabay.jpg`) y mostraba un hash de 64 caracteres:
+
+La longitud sugiere SHA-256, pero John the Ripper con `rockyou.txt` y formato `Raw-SHA256` no encontró nada — señal de que el algoritmo estaba mal identificado. La sala indicaba que era **GOST** (GOST R 34.11-94), un algoritmo ruso que coincide en longitud de salida con SHA-256 pero es completamente distinto:
 
 ```bash
-wget http://<IP>:65524/<ruta>/imagen.jpg
-steghide extract -sf imagen.jpg -p <contraseña>
+john --format=gost --wordlist=/root/easypeasy.txt hash3.txt
 ```
 
-El archivo extraído contenía un usuario y una contraseña en
-**binario**, decodificados con CyberChef (`From Binary`).
+![John crackeando hash GOST](img/24-john-gost-cracked.png)
 
-## 6. Acceso por SSH
+Resultado: contraseña `mypasswordforthatjob`.
+
+### Esteganografía
+
+La imagen se descargó con wget desde la ruta correcta (`/n0th1ng3ls3m4tt3r/binarycodepixabay.jpg`) y se analizó con steghide usando la contraseña recién obtenida:
 
 ```bash
-ssh -p 6498 <usuario>@<IP>
+wget http://<IP>:65524/n0th1ng3ls3m4tt3r/binarycodepixabay.jpg
+steghide extract -sf binarycodepixabay.jpg -p mypasswordforthatjob
+cat secrettext.txt
 ```
 
-Dentro de la máquina, el archivo de la flag de usuario tenía su
-contenido en **ROT13** (un cifrado César de desplazamiento 13), con
-una pista explícita en el propio archivo ("seems wrong, like it's
-rotated"). Se decodificó con CyberChef (`ROT13`).
+![steghide extrayendo credenciales en binario](img/29-steghide-secrettext.png)
 
-## 7. Escalada de privilegios
+El archivo contenía `username: boring` y una contraseña en **binario**. Decodificada con CyberChef → `From Binary` → contraseña SSH en texto plano.
 
-Camino explorado: se identificó CUPS 2.2.7 corriendo localmente en
-el puerto 631 (solo accesible desde dentro de la máquina, no visible
-en el escaneo externo). La investigación llevó a identificar la
-vulnerabilidad asociada a esa versión exacta (CVE-2018-16860), un
-desbordamiento de búfer en la pila que requiere desarrollo de
-exploit a medida (shellcode) para convertirse en ejecución de
-código. Esa técnica está fuera del alcance de mis conocimientos
-actuales en explotación binaria, así que, en lugar de intentarla a
-ciegas, prioricé buscar un vector de escalada más accesible —
-decisión razonable dado que la sala es de nivel introductorio.
-
-El vector real:
+### Acceso SSH
 
 ```bash
-sudo -l          # sin permisos sudo para el usuario
-find / -perm -4000 -type f 2>/dev/null   # sin binarios SUID inusuales
+ssh -p 6498 boring@<IP>
+```
+
+La flag de usuario estaba en el home del usuario. El contenido tenía una pista: *"User Flag But It Seems Wrong Like It's Rotated Or Something"*:
+
+![Flag de usuario en ROT13](img/30-user-flag-rot13.png)
+
+`synt{...}` decodificado con ROT13 en CyberChef da la flag real.
+
+---
+
+## 4. Escalada de privilegios
+
+Primero verifiqué los vectores más rápidos:
+
+```bash
+sudo -l          # sin permisos sudo
+find / -perm -4000 -type f 2>/dev/null   # sin SUID inusuales relevantes
 find / -writable -type f 2>/dev/null | grep -v "^/proc"
 ```
 
-Este último comando reveló un script dentro de `/var/www/` con
-permiso de escritura para cualquier usuario. Su contenido confirmaba
-que se ejecutaba como root:
+El último comando reveló `/var/www/.mysecretcronjob.sh` — un script con permiso de escritura para cualquier usuario. Al revisar crontab:
+
+![crontab mostrando el script ejecutado como root](img/32-crontab.png)
+
+Una tarea cron ejecuta ese script como root cada minuto. Al tener permiso de escritura, puedo inyectar comandos que correrán con privilegios de root en la siguiente ejecución.
+
+Estrategia: en lugar de copiar la flag a `/tmp` (susceptible a condiciones de carrera), modifiqué los permisos del archivo original y su carpeta:
 
 ```bash
-grep -r "<nombre_del_script>" /etc/crontab /etc/cron.d/
-# * * * * * root cd /var/www/ && sudo bash <nombre_del_script>
+echo 'chmod 755 /root; chmod 644 /root/root.txt' >> /var/www/.mysecretcronjob.sh
 ```
 
-Una tarea cron ejecutaba este script como root cada minuto. Al tener
-permiso de escritura sobre un script que root ejecuta
-automáticamente, es posible inyectar comandos arbitrarios que
-correrán con privilegios de root en la siguiente ejecución.
+![Script cron con chmod inyectado](img/33-cron-script-chmod.png)
 
-Primer intento: copiar el contenido de la flag de root a un archivo
-en `/tmp` con permisos abiertos. Este intento falló — el archivo
-resultante aparecía vacío, probablemente por una condición de
-carrera entre la edición del script y una ejecución del cron a
-mitad de escritura.
+Esperé un minuto y verifiqué:
 
-Enfoque alternativo, más directo: en vez de copiar el contenido a un
-archivo intermedio, modificar los permisos del archivo original y de
-su carpeta contenedora:
+![/root accesible con root.txt legible](img/34-root-ls.png)
 
 ```bash
-echo 'chmod 755 /root; chmod 644 /root/<archivo_flag>' >> <script_cron>
+cat /root/root.txt
 ```
 
-Tras la siguiente ejecución del cron, un intento de lectura directa
-falló con "No such file or directory" — el archivo real resultó
-tener un punto inicial que lo marcaba como oculto en el sistema, algo
-que no había considerado en el primer intento. Corregido el nombre,
-la lectura directa confirmó la escalada de privilegios.
+Root flag obtenida.
+
+---
+
+## Lo que probé y no funcionó
+
+- **John con SHA-256 contra `rockyou.txt`**: el hash tenía 64 caracteres, lo que inmediatamente sugiere SHA-256. John con `--format=Raw-SHA256` y `rockyou.txt` completo (14M entradas) no produjo ningún resultado — señal de que el algoritmo estaba mal identificado. El algoritmo real era GOST.
+- **John con GOST y `easypeasy.txt`**: la wordlist personalizada de la sala tampoco crackeó el hash. Funcionó solo con `rockyou.txt`.
+- **wget de la imagen desde la raíz del Apache**: el primer intento fue `wget http://<IP>:65524/binarycodepixabay.jpg` → 404. La imagen estaba dentro del subdirectorio `/n0th1ng3ls3m4tt3r/`, ruta que se obtuvo decodificando el Base62.
+- **Copiar flag a `/tmp`**: el primer enfoque fue inyectar `cat /root/root.txt > /tmp/root_flag.txt; chmod 777 /tmp/root_flag.txt`. El archivo aparecía vacío, probablemente por una condición de carrera entre la escritura del script y la ejecución del cron. Cambiar permisos directamente fue más confiable.
+
+---
+
+## Perspectiva defensiva
+
+- **Scripts cron con permisos abiertos**: cualquier script ejecutado como root debe tener permisos `700` o `750` (solo root puede escribir). Un script mundo-escribible ejecutado por cron es escalada directa en un minuto.
+- **No almacenar hashes en HTML**: el hash GOST en el código fuente de la página era el vector para obtener la contraseña de steghide. Información sensible nunca debe estar expuesta en el frontend.
+- **Esteganografía no es seguridad**: steghide solo es útil como capa adicional, no como protección primaria. Si el atacante obtiene la contraseña (via cracking), el contenido oculto queda expuesto.
+- **SSH en puerto no estándar**: reduce el ruido, pero no impide el acceso a un atacante que haga un escaneo completo de puertos. La seguridad real viene de autenticación por clave, no por oscuridad de puerto.
+
+---
 
 ## Lecciones aprendidas
 
-- La longitud de un hash no determina su algoritmo; hay que
-  confirmarlo antes de invertir tiempo en cracking.
-- Una lista de palabras corta puede ocultar resultados que una lista
-  más grande sí encuentra.
-- El contenido oculto en HTML (etiquetas `hidden`, comentarios) es
-  invisible en el navegador pero completamente legible con `curl`.
-- Un script escribible ejecutado por una tarea cron con privilegios
-  elevados es un vector de escalada directo y de bajo esfuerzo —
-  conviene revisarlo antes que vulnerabilidades más complejas del
-  software instalado.
-- Modificar permisos del recurso original puede ser más directo y
-  confiable que copiar su contenido a una ubicación intermedia.
-- Verificar nombres de archivo exactos (incluyendo archivos ocultos)
-  antes de concluir que algo "no existe".
+- Siempre hacer `nmap -p-` — los servicios en puertos altos no aparecen en el escaneo por defecto y son habituales en CTFs.
+- La longitud de un hash no determina su algoritmo. 64 chars puede ser SHA-256 o GOST. Cuando el cracking falla con el formato obvio, hay que reconsiderar el algoritmo.
+- Enumerar con listas de distintos tamaños: `common.txt` para un primer barrido rápido, `big.txt` cuando hay indicios de contenido adicional.
+- `curl | grep -i hidden` es el método más directo para extraer contenido que el navegador oculta visualmente.
+- En escalada de privilegios, modificar permisos del archivo original es más confiable que copiarlo a `/tmp`.
 
-## Mitigaciones (perspectiva defensiva)
-
-- No dejar scripts ejecutados por root con permisos de escritura
-  para otros usuarios.
-- Revisar periódicamente los permisos de archivos referenciados en
-  tareas cron del sistema.
-- No exponer información en comentarios, atributos `hidden` o
-  metadatos de páginas web.
-- Usar algoritmos de hash modernos con sal (no GOST ni MD5) para
-  almacenamiento de contraseñas.
+---
 
 ## Referencias
 
-- [TryHackMe — Easy Peasy](https://tryhackme.com/room/easypeasy)
 - [CyberChef](https://gchq.github.io/CyberChef/)
-- [GTFOBins — Linux binaries that can bypass local security restrictions](https://gtfobins.github.io/)
-- [CVE-2018-16860 — CUPS local privilege escalation (NVD)](https://nvd.nist.gov/vuln/detail/CVE-2018-16860)
+- [GTFOBins](https://gtfobins.github.io/)
+- [John the Ripper formats](https://www.openwall.com/john/doc/OPTIONS.shtml)
