@@ -114,8 +114,8 @@ Root flag en `/root/root.txt`.
 
 ## Lo que probé y no funcionó
 
-- **Primer intento de tar con typo**: ejecuté el comando con `/bin/b` en lugar de `/bin/bash` — el comando quedó cortado al escribirlo. Falló con `/bin/sh: /bin/b: not found`. La segunda ejecución con la ruta completa funcionó.
 - **Por qué SSH y no FTP o HTTP**: el nombre en `task.txt` era un usuario corto de sistema Linux, lo que apunta a SSH como servicio de acceso. FTP ya estaba abierto de forma anónima y HTTP no acepta credenciales de sistema.
+- **Typo en el comando tar**: en el primer intento escribí `/bin/b` en lugar de `/bin/bash` — el comando quedó cortado. Falló con `/bin/sh: /bin/b: not found`. La segunda ejecución con la ruta completa funcionó.
 
 ---
 
