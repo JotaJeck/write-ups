@@ -1,246 +1,187 @@
 # Simple CTF — TryHackMe (Fácil)
 
-**Plataforma:** TryHackMe
-**Dificultad:** Fácil
-**Categorías:** Reconocimiento de red, enumeración web, SQL injection,
-cracking de contraseñas, escalada de privilegios en Linux
-**Herramientas:** Nmap, Gobuster, curl, Python 3, John the Ripper, SSH
+**Plataforma:** TryHackMe · **Categoría:** Reconocimiento / Web / Explotación / PrivEsc · **Herramientas:** Nmap, Gobuster, curl, Python 3, SSH, vim
 
-## Índice
-
-1. [Resumen](#resumen)
-2. [Reconocimiento](#1-reconocimiento)
-3. [Enumeración web](#2-enumeración-web)
-4. [Identificación de la vulnerabilidad](#3-identificación-de-la-vulnerabilidad)
-5. [Explotación — SQL Injection](#4-explotación--sql-injection)
-6. [Acceso por SSH](#5-acceso-por-ssh)
-7. [Escalada de privilegios](#6-escalada-de-privilegios)
-8. [Lecciones aprendidas](#lecciones-aprendidas)
-9. [Mitigaciones](#mitigaciones-perspectiva-defensiva)
-10. [Referencias](#referencias)
+---
 
 ## Resumen
 
-Simple CTF es una máquina Linux con tres servicios expuestos: FTP,
-HTTP y SSH en un puerto no estándar. La aplicación web oculta un CMS
-con una vulnerabilidad de inyección SQL ciega basada en tiempo, que
-permite extraer credenciales de la base de datos sin autenticación.
-Con esas credenciales se accede por SSH, y la escalada de privilegios
-se logra a través de un permiso de sudo mal configurado sobre vim.
+Máquina Linux con FTP, HTTP y SSH en puerto no estándar. El servidor web corre CMS Made Simple con una vulnerabilidad de inyección SQL ciega basada en tiempo (CVE-2019-9053) que permite extraer credenciales de la base de datos sin autenticación. Con acceso SSH como usuario de bajos privilegios, la escalada es inmediata: el usuario puede ejecutar `vim` como root sin contraseña mediante `sudo`.
+
+---
+
+## Habilidades demostradas
+
+- Escaneo de puertos con Nmap: barrido por rango, escaneo completo `-p-` y detección de versiones `-sV`
+- Enumeración de directorios web con Gobuster
+- Lectura de `robots.txt` para identificar rutas y software instalado
+- Identificación de CMS y versión desde código fuente
+- Explotación de SQLi ciega basada en tiempo (CVE-2019-9053) en CMS Made Simple
+- Cracking de hash MD5 con wordlist
+- Escalada de privilegios mediante `sudo vim` (GTFOBins)
+
+---
 
 ## 1. Reconocimiento
 
-Escaneo de puertos bajo el 1000, para responder la primera pregunta
-de la sala:
+La primera pregunta de la sala pregunta cuántos puertos están abiertos bajo el 1000. Empecé con ese rango específico:
 
 ```bash
 nmap -p 0-1000 <IP>
 ```
 
-Resultado: dos puertos abiertos en ese rango — FTP (21) y HTTP (80).
-
-Escaneo completo de todos los puertos para confirmar si hay más
-servicios:
+Resultado: puertos 21 (FTP) y 80 (HTTP) abiertos. Para confirmar si había servicios en puertos altos, hice el escaneo completo:
 
 ```bash
 nmap -p- -T4 <IP>
 ```
 
-**Nota importante:** el escaneo completo con `-T4` sobre VPN no
-detectó un tercer puerto abierto (SSH en un puerto no estándar),
-a pesar de existir. Esto se debe a que la agresividad del timing
-combinada con la latencia de la VPN genera falsos negativos en
-puertos que responden más lento. El puerto fue verificado
-individualmente una vez que se supo de su existencia:
+El escaneo completo con `-T4` sobre VPN **no detectó el SSH en puerto 2222** aunque existe. La agresividad del timing combinada con la latencia de la VPN genera falsos negativos en puertos que responden más lento. Una vez que supe de su existencia, lo verifiqué individualmente:
 
 ```bash
-nmap -p <puerto_ssh> -sV --max-retries 3 <IP>
+nmap -p 2222 -sV <IP>
+nmap -sV -p 21,80 <IP>
 ```
 
-**Lección:** nunca confiar ciegamente en un solo escaneo completo.
-Cuando el contexto sugiere que puede haber más servicios, vale la
-pena verificar puertos específicos de forma individual.
-
-Detección de versiones en los tres puertos confirmados:
-
-```bash
-nmap -sV -p 21,80,<puerto_ssh> <IP>
-```
+![Nmap con versiones de servicios](img/02-nmap-versions.png)
 
 | Puerto | Servicio | Versión |
 |--------|----------|---------|
-| 21 | FTP | vsftpd 3.0.3 |
-| 80 | HTTP | Apache 2.4.18 (Ubuntu) |
-| `<puerto>` | SSH | OpenSSH 7.2p2 Ubuntu |
+| 21     | FTP      | vsftpd 3.0.3 |
+| 80     | HTTP     | Apache 2.4.18 (Ubuntu) |
+| 2222   | SSH      | OpenSSH 7.2p2 |
+
+**Lección**: nunca confiar en un solo escaneo completo. Cuando el contexto sugiere que puede haber más servicios, vale la pena verificar puertos específicos de forma individual.
+
+---
 
 ## 2. Enumeración web
 
-El puerto 80 mostraba la página por defecto de Apache — señal de que
-la aplicación real estaba en otra ruta. Enumeración con Gobuster:
+El puerto 80 mostraba la página por defecto de Apache. Enumeré directorios:
 
 ```bash
 gobuster dir -u http://<IP>/ -w /usr/share/wordlists/dirb/common.txt
 ```
 
-Entre los resultados, un directorio con código 301 (redirección)
-llamado `/simple/` destacó como el único no perteneciente a una
-instalación estándar de Apache.
+![Gobuster encontrando /simple](img/05-gobuster.png)
 
-Revisión de `robots.txt`, que tenía un tamaño inusualmente grande
-(929 bytes) para ser un archivo estándar:
+Entre los resultados, `/simple` con redirect 301 era el único directorio que no pertenece a una instalación estándar de Apache.
+
+`robots.txt` tenía un tamaño inusualmente grande (929 bytes) — señal de que contenía algo más que las entradas habituales:
 
 ```bash
 curl -s http://<IP>/robots.txt
 ```
 
-El archivo contenía una entrada `Disallow` con el nombre de otra
-aplicación instalada en el servidor (`openemr-5_0_1_3`), información
-de reconocimiento útil aunque no fue el vector de ataque principal
-en esta sala.
+![robots.txt con /openemr-5_0_1_3 deshabilitado](img/06-robots-txt.png)
 
-Inspección del código fuente de `/simple/` para confirmar la
-aplicación y su versión:
+La entrada `Disallow: /openemr-5_0_1_3` revela otra aplicación instalada en el servidor. No fue el vector de ataque principal, pero es información de reconocimiento útil.
+
+En `/simple/` confirmé el CMS y su versión filtrando el código fuente:
 
 ```bash
 curl -s http://<IP>/simple/ | grep -i -E "generator|version|powered|copyright"
 ```
 
-Confirmado: **CMS Made Simple versión 2.2.8**, visible tanto en la
-metaetiqueta `Generator` como en el pie de página de la aplicación.
+**CMS Made Simple versión 2.2.8** — visible tanto en la metaetiqueta `Generator` como en el pie de página.
 
-## 3. Identificación de la vulnerabilidad
+---
 
-Con el nombre y versión exactos del software, la búsqueda de
-vulnerabilidades conocidas arrojó **CVE-2019-9053**: una inyección
-SQL ciega basada en tiempo no autenticada, a través del módulo News
-y el parámetro `m1_idlist`. Afecta a CMS Made Simple versión 2.2.9
-y anteriores, lo que incluye la 2.2.8 instalada.
+## 3. Explotación / Acceso inicial
 
-**Qué es una inyección SQL ciega basada en tiempo:** a diferencia de
-una SQLi clásica (donde el resultado de la consulta se muestra
-directamente en la página), esta variante no devuelve ningún dato
-visible. En cambio, el atacante inyecta condiciones que hacen que
-la base de datos espere un número determinado de segundos antes de
-responder si la condición es verdadera. Midiendo el tiempo de
-respuesta, es posible extraer información carácter por carácter.
+### CVE-2019-9053 — SQLi ciega basada en tiempo
 
-## 4. Explotación — SQL Injection
+Con nombre y versión del CMS confirmados, busqué CVEs. CVE-2019-9053 afecta a CMS Made Simple ≤ 2.2.9: es una inyección SQL ciega basada en tiempo no autenticada a través del módulo News y el parámetro `m1_idlist`.
 
-Se utilizó un script público en Python 3 para automatizar la
-explotación del CVE-2019-9053. El script extrae carácter por
-carácter, en este orden: el salt de la contraseña, el nombre de
-usuario, el email y el hash de la contraseña del administrador.
+**Cómo funciona**: a diferencia de una SQLi clásica donde el resultado aparece en la página, esta variante no devuelve datos visibles. El atacante inyecta condiciones que hacen que la base de datos espere N segundos si la condición es verdadera. Midiendo el tiempo de respuesta, se extrae información carácter por carácter.
+
+Usé el script público de Exploit-DB para automatizar la extracción:
 
 ```bash
+pip3 install termcolor requests --break-system-packages
 python3 exploit.py -u http://<IP>/simple --crack -w /usr/share/wordlists/rockyou.txt
 ```
 
-**Dependencia requerida:**
-```bash
-pip3 install termcolor requests --break-system-packages
-```
+El script extrajo salt, usuario, email y hash MD5, y crackeó la contraseña comparando `md5(salt + candidato)` contra el hash:
 
-**Nota sobre el tiempo:** con un valor de `TIME=2` (2 segundos de
-espera por carácter), la extracción completa tardó varios minutos.
-Es normal: la técnica es lenta por diseño, ya que cada bit de
-información requiere al menos una petición HTTP con espera
-intencional.
+![Exploit con contraseña crackeada: secret](img/08-exploit-cracked.png)
 
-El script extrajo los siguientes datos:
+Credenciales obtenidas: `mitch` / `secret`.
 
-- **Salt:** `<valor_del_salt>`
-- **Usuario:** `mitch`
-- **Email:** `admin@admin.com`
-- **Hash:** `<hash_md5>`
+**Nota sobre el tiempo**: con el valor por defecto de 2 segundos por carácter, la extracción completa tarda varios minutos. Es normal — la técnica es lenta por diseño.
 
-Y crackeó la contraseña usando `rockyou.txt` comparando
-`md5(salt + candidato)` contra el hash extraído.
-
-## 5. Acceso por SSH
-
-Con el usuario y contraseña obtenidos:
+### Acceso SSH
 
 ```bash
-ssh -p <puerto_no_estandar> <usuario>@<IP>
+ssh -p 2222 mitch@<IP>
 ```
 
-La flag de usuario estaba en el directorio personal, legible
-directamente con `cat`.
+La flag de usuario estaba en el home de mitch, legible directamente con `cat`.
 
-## 6. Escalada de privilegios
+---
 
-Verificación estándar de permisos de sudo:
+## 4. Escalada de privilegios
+
+Verificación inmediata de permisos sudo:
 
 ```bash
 sudo -l
 ```
 
-Resultado: (root) NOPASSWD: /usr/bin/vim
+![sudo -l mostrando vim con NOPASSWD](img/09-sudo-vim.png)
 
-
-El usuario tiene permiso para ejecutar **vim** como root sin
-contraseña. Vim incluye la capacidad de ejecutar comandos del
-sistema operativo desde dentro del editor mediante el comando
-interno `!`. Esto convierte cualquier permiso de sudo sobre vim
-en una escalada de privilegios directa:
+`mitch` puede ejecutar `/usr/bin/vim` como root sin contraseña. Vim tiene la capacidad de ejecutar comandos del sistema operativo desde su modo de comandos con `!`. Cualquier permiso de sudo sobre vim es escalada directa:
 
 ```bash
 sudo vim -c ':!/bin/bash'
 ```
 
-- **`sudo vim`**: abre vim con privilegios de root.
-- **`-c`**: ejecuta un comando interno de vim al iniciarse.
-- **`':!/bin/bash'`**: lanza una shell bash desde dentro de vim,
-  heredando los privilegios de root con los que se abrió vim.
+- `sudo vim`: abre vim con privilegios de root
+- `-c`: ejecuta un comando interno de vim al iniciarse
+- `':!/bin/bash'`: lanza una shell bash heredando los privilegios de root
 
-Confirmación:
-```bash
-whoami
-# root
-```
+Root flag en `/root/root.txt`.
 
-La flag de root estaba en `/root/root.txt`.
+---
+
+## Lo que probé y no funcionó
+
+- **FTP anónimo**: el servidor acepta conexión anónima y hay un archivo accesible. No contenía credenciales ni nada directamente útil para el ataque principal.
+- **exploit.py sin rockyou.txt**: el primer intento del script falló con `FileNotFoundError` porque la wordlist no estaba en la ruta por defecto. Lo resolví pasando la ruta correcta con el flag `-w`.
+- **`nmap -p- -T4` perdiendo el SSH**: el escaneo completo no reportó el puerto 2222 por falso negativo — latencia de VPN + timing agresivo. Tuve que verificarlo individualmente una vez que la sala insinuó su existencia.
+
+---
+
+## Impacto
+
+Un atacante externo sin credenciales puede obtener shell de root en dos pasos: explotar la SQLi pública del CMS para extraer credenciales de SSH, y luego abusar de un permiso sudo mal configurado. No se necesita interacción del usuario, acceso físico ni desarrollar código propio. El servidor completo queda comprometido desde la red en pocos minutos.
+
+---
+
+## Perspectiva defensiva
+
+- **Actualizar el CMS**: CVE-2019-9053 fue parcheado en versiones posteriores de CMS Made Simple. Software desactualizado con CVEs públicos es el vector más evitable de todos.
+- **Consultas parametrizadas**: la SQLi existe porque el módulo concatena input del usuario directamente en la consulta SQL. Prepared statements eliminan este vector por completo.
+- **No exponer versiones**: la metaetiqueta `Generator` y el pie de página del CMS anunciaron la versión exacta. Eliminar esa información obliga al atacante a adivinar o bruteforcear el número de versión.
+- **Principio de mínimo privilegio en sudo**: `vim` en GTFOBins tiene escape de shell trivial. Un usuario normal nunca debería tener sudo sobre editores de texto ni intérpretes. Si la intención era permitir editar un archivo concreto, `sudoedit /ruta/exacta/archivo` es la alternativa correcta.
+- **Contraseñas robustas**: `secret` es una contraseña de 6 caracteres que aparece en cualquier wordlist estándar. Una contraseña fuerte no habría sido crackeada aunque el hash hubiera sido extraído.
+- **robots.txt no oculta rutas**: `Disallow` es una instrucción para bots de búsqueda, no un control de acceso. Un atacante lo lee primero — funciona como un mapa de rutas interesantes.
+
+---
 
 ## Lecciones aprendidas
 
-- Un escaneo completo de puertos con `-T4` sobre VPN puede generar
-  falsos negativos. Verificar puertos sospechosos de forma
-  individual con `--max-retries` es más confiable.
-- `robots.txt` puede revelar el nombre exacto y versión de software
-  instalado — información de reconocimiento que normalmente requiere
-  acceso a la aplicación.
-- Filtrar el código fuente con `grep -i -E "generator|version|powered"` 
-  es la forma más rápida de identificar un CMS y su versión sin
-  leer el HTML completo.
-- La inyección SQL ciega basada en tiempo es lenta pero efectiva:
-  extrae datos carácter por carácter midiendo tiempos de respuesta,
-  sin necesitar ninguna salida visible de la base de datos.
-- Un permiso de sudo sobre un programa con capacidad de ejecutar
-  comandos del sistema (como vim, python, find, awk) equivale a
-  acceso root directo. GTFOBins documenta estas técnicas para
-  decenas de programas.
-- El tipo de wordlist importa: listas de rutas web para Gobuster,
-  listas de contraseñas para cracking de hashes.
+- Un escaneo completo con `-T4` sobre VPN puede generar falsos negativos. Verificar puertos sospechosos individualmente con `--max-retries` es más confiable cuando el contexto sugiere que puede haber más servicios.
+- `robots.txt` y el código fuente del CMS son las primeras cosas a revisar en cualquier servidor web: revelan tecnologías y versiones sin necesidad de fuzzing adicional.
+- La SQLi ciega basada en tiempo es lenta pero efectiva: extrae datos carácter por carácter midiendo tiempos de respuesta, sin ninguna salida visible de la base de datos.
+- GTFOBins cubre la mayoría de los binarios comunes. Si `sudo -l` muestra algo, revisarlo antes de buscar otra técnica.
+- El tipo de wordlist importa: listas de rutas web para Gobuster, listas de contraseñas para cracking de hashes.
 
-## Mitigaciones (perspectiva defensiva)
-
-- Actualizar CMS Made Simple a una versión posterior a 2.2.9, donde
-  este CVE está parcheado.
-- Usar consultas parametrizadas (prepared statements) en vez de
-  concatenación directa de input del usuario en consultas SQL.
-- No exponer información de versión del software en metaetiquetas,
-  pies de página ni archivos públicos como `robots.txt`.
-- Auditar los permisos de sudo regularmente: ningún usuario no
-  privilegiado debería tener sudo sobre editores de texto,
-  intérpretes de lenguajes, o cualquier programa listado en
-  GTFOBins.
-- Usar contraseñas robustas para cuentas de administrador de CMS —
-  una contraseña de 6 caracteres como la de esta sala es crackeable
-  en segundos con una wordlist estándar.
+---
 
 ## Referencias
 
-- [TryHackMe — Simple CTF](https://tryhackme.com/room/easyctf)
 - [CVE-2019-9053 — NVD](https://nvd.nist.gov/vuln/detail/CVE-2019-9053)
+- [Exploit-DB 46635](https://www.exploit-db.com/exploits/46635)
 - [GTFOBins — vim](https://gtfobins.github.io/gtfobins/vim/)
-- [CVE-2019-9053 exploit](https://github.com/Perseus99999/CVE-2019-9053-working-/blob/main/exploit.py)
+- [TryHackMe — Simple CTF](https://tryhackme.com/room/easyctf)
