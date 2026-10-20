@@ -30,5 +30,5 @@ Cada write-up sigue una estructura consistente:
 
 ## Herramientas
 
-Nmap, Gobuster, curl, CyberChef, John the Ripper, SSH,
+Nmap, Gobuster, curl, CyberChef, John the Ripper, steghide, SSH,
 Python 3, ftp, Hydra, netcat, smbclient, searchsploit, strings
