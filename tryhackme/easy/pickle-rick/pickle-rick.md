@@ -1,68 +1,56 @@
 # Pickle Rick — TryHackMe (Fácil)
 
-**Plataforma:** TryHackMe
-**Dificultad:** Fácil
-**Categorías:** Reconocimiento web, análisis de código fuente,
-command injection, escalada de privilegios en Linux
-**Herramientas:** Nmap, Gobuster, curl, CyberChef, navegador web
+**Plataforma:** TryHackMe · **Categoría:** Reconocimiento web / Análisis de código fuente / Command Injection / PrivEsc · **Herramientas:** Nmap, Gobuster, curl, CyberChef, navegador web
 
-## Índice
-
-1. [Resumen](#resumen)
-2. [Reconocimiento](#1-reconocimiento)
-3. [Enumeración web](#2-enumeración-web)
-4. [Acceso al panel de comandos](#3-acceso-al-panel-de-comandos)
-5. [Ingrediente 1](#4-ingrediente-1)
-6. [Ingrediente 2](#5-ingrediente-2)
-7. [Ingrediente 3](#6-ingrediente-3)
-8. [Lecciones aprendidas](#lecciones-aprendidas)
-9. [Mitigaciones](#mitigaciones-perspectiva-defensiva)
-10. [Referencias](#referencias)
+---
 
 ## Resumen
 
-Pickle Rick es una máquina Linux temática de Rick and Morty con foco
-completamente web. Las credenciales de acceso están expuestas en el
-código fuente de la página principal y en `robots.txt`. Con ellas se
-accede a un panel de administración con ejecución remota de comandos
-(RCE), que permite explorar el sistema de archivos y encontrar los
-tres ingredientes ocultos. El usuario del servidor web tiene permisos
-de sudo irrestrictos, lo que convierte cualquier exploración en
-acceso root de facto.
+Máquina Linux temática de Rick and Morty con foco completamente web. Las credenciales de acceso están expuestas en el código fuente de la página principal y en `robots.txt`. Con ellas se accede a un panel de administración con ejecución remota de comandos (RCE), que permite explorar el sistema de archivos y encontrar los tres ingredientes ocultos. El usuario del servidor web tiene permisos de sudo irrestrictos, lo que convierte cualquier exploración en acceso root de facto.
+
+---
+
+## Habilidades demostradas
+
+- Escaneo de puertos y detección de servicios con Nmap (`-sC -sV`)
+- Enumeración de directorios web con Gobuster
+- Análisis de código fuente HTML para extraer credenciales expuestas en comentarios
+- Lectura de `robots.txt` como fuente de información sensible
+- Identificación y explotación de Command Injection / RCE en panel web
+- Evasión de filtros de lista negra usando comandos alternativos (`less`, `tac`, `grep`)
+- Escalada de privilegios mediante `sudo (ALL) NOPASSWD: ALL`
+- Reconocimiento de rabbit holes (distractores intencionales) en CTFs
+
+---
 
 ## 1. Reconocimiento
-
-Escaneo de puertos con detección de versiones:
 
 ```bash
 nmap -sC -sV <IP>
 ```
 
+![Nmap revelando puertos 22 y 80 con título "Rick is sup4r cool"](img/01-nmap.png)
+
 | Puerto | Servicio | Versión |
 |--------|----------|---------|
-| 22 | SSH | OpenSSH 8.2p1 Ubuntu |
-| 80 | HTTP | Apache 2.4.41 (Ubuntu) |
+| 22     | SSH      | OpenSSH 8.2p1 Ubuntu |
+| 80     | HTTP     | Apache 2.4.41 (Ubuntu) |
 
-El servidor SSH solo acepta autenticación por clave pública
-(`Permission denied (publickey)`), por lo que el vector principal
-es el servicio web en el puerto 80.
+El título HTTP `Rick is sup4r cool` es una pista temática. El servidor SSH rechaza autenticación por contraseña (`Permission denied (publickey)`), por lo que el vector principal es el servicio web en el puerto 80.
+
+---
 
 ## 2. Enumeración web
 
 ### Código fuente de la página principal
 
-La página principal mostraba un mensaje narrativo sin información
-técnica visible. Sin embargo, el código fuente (`Ctrl+U`) contenía
-un comentario HTML con una credencial:
+La página principal mostraba un mensaje narrativo sin información técnica visible. El código fuente (`Ctrl+U`) contenía un comentario HTML con una credencial:
 
 ```html
 <!-- Note to self, remember username! Username: R1ckRul3s -->
 ```
 
-Los comentarios HTML son completamente invisibles en el navegador
-pero visibles para cualquiera que inspeccione el código fuente.
-Esta es una práctica de seguridad deficiente muy común en
-aplicaciones web mal desarrolladas.
+Los comentarios HTML son completamente invisibles en el navegador pero visibles para cualquiera que inspeccione el código fuente. Práctica de seguridad deficiente muy común en aplicaciones web mal desarrolladas.
 
 ### robots.txt
 
@@ -70,21 +58,19 @@ aplicaciones web mal desarrolladas.
 curl -s http://<IP>/robots.txt
 ```
 
-El archivo contenía una sola palabra que resultó ser la contraseña
-del panel de administración.
+El archivo contenía una sola palabra que resultó ser la contraseña del panel de administración. `robots.txt` es un archivo público — cualquier dato incluido ahí es accesible para cualquier visitante, no solo para buscadores.
 
 ### Gobuster
 
 ```bash
-gobuster dir -u http://<IP>/ -w /usr/share/wordlists/dirb/common.txt
 gobuster dir -u http://<IP>/ -w /usr/share/wordlists/dirb/big.txt
 ```
 
-Ninguna de las dos wordlists encontró las páginas PHP relevantes
-(`login.php`, `portal.php`). Esto confirma que Gobuster depende
-completamente de la wordlist usada — rutas con nombres específicos
-del contexto no aparecen en listas genéricas. Fueron descubiertas
-probando rutas comunes manualmente en el navegador.
+![Gobuster completo: /assets (301) y /robots.txt (200)](img/02-gobuster.png)
+
+Gobuster encontró `/assets` y `/robots.txt`, pero **no encontró `login.php` ni `portal.php`**. Esto confirma que Gobuster depende completamente de la wordlist — rutas con nombres específicos del contexto no aparecen en listas genéricas. Fueron descubiertas probando rutas comunes manualmente en el navegador.
+
+---
 
 ## 3. Acceso al panel de comandos
 
@@ -92,118 +78,122 @@ Con las credenciales obtenidas:
 - **Usuario:** `R1ckRul3s` (del comentario HTML)
 - **Contraseña:** (de `robots.txt`)
 
-Se accedió a `http://<IP>/login.php`, que redirige a
-`http://<IP>/portal.php` tras autenticarse correctamente.
+Acceso a `http://<IP>/login.php`, que redirige a `http://<IP>/portal.php` tras autenticarse.
 
-El portal expone un **Command Panel**: un campo de texto con un
-botón "Execute" que envía comandos al servidor vía POST y muestra
-el resultado en la página. Esto es ejecución remota de comandos
-(RCE) directa — cualquier comando Linux válido se ejecuta en el
-servidor con los permisos del proceso web (`www-data`).
+El portal expone un **Command Panel**: un campo de texto con un botón "Execute" que envía comandos al servidor vía POST y muestra el resultado en la página. Esto es RCE directa — cualquier comando Linux válido se ejecuta en el servidor con los permisos del proceso web (`www-data`).
 
 ### Verificación del nivel de acceso
 
+```bash
 sudo -l
+```
 
-Resultado: (ALL) NOPASSWD: ALL
+Resultado: `(ALL) NOPASSWD: ALL`
 
+`www-data` puede ejecutar **cualquier comando como cualquier usuario**, incluyendo root, sin contraseña. Es la configuración de sudo más permisiva posible.
 
-El usuario `www-data` puede ejecutar **cualquier comando como
-cualquier usuario**, incluyendo root, sin contraseña. Es la
-configuración de sudo más permisiva posible.
+### Comandos bloqueados
 
-### Nota sobre comandos bloqueados
+El panel tiene una lista negra que bloquea ciertos comandos, incluyendo `cat`:
 
-El panel tiene una lista negra que bloquea ciertos comandos,
-incluyendo `cat`. Los filtros basados en listas negras son
-inherentemente eludibles porque es imposible bloquear todos
-los comandos equivalentes. Alternativas funcionales:
+![Panel mostrando "Command disabled" al intentar un comando bloqueado](img/04-command-disabled.png)
 
+Los filtros de lista negra son inherentemente eludibles porque es imposible bloquear todos los comandos equivalentes. Alternativas funcionales:
+
+```bash
 less <archivo>
 tac <archivo>
 grep . <archivo>
+```
 
+---
 
 ## 4. Ingrediente 1
 
-Listado del directorio web actual: ls
+```bash
+ls
+```
 
+![Command Panel ejecutando ls, mostrando Sup3rS3cretPickl3Ingred.txt y clue.txt](img/03-command-panel-ls.png)
 
-Se encontró el archivo `Sup3rS3cretPickl3Ingred.txt` en el
-directorio raíz del servidor web. Lectura con alternativa a `cat`: less Sup3rS3cretPickl3Ingred.txt
+Se encontró `Sup3rS3cretPickl3Ingred.txt` en el directorio raíz del servidor web. Lectura con alternativa a `cat`:
 
+```bash
+less Sup3rS3cretPickl3Ingred.txt
+```
 
-También se encontró `clue.txt`, cuyo contenido indicaba buscar
-en el sistema de archivos para los ingredientes restantes.
+También se encontró `clue.txt`, cuyo contenido indicaba buscar en el sistema de archivos para los ingredientes restantes.
+
+---
 
 ## 5. Ingrediente 2
 
-Exploración del sistema de archivos: sudo find / -name “ingredient” 2>/dev/null
+```bash
+sudo find / -name "*ingredient*" 2>/dev/null
+```
 
+Se encontró el archivo `/home/rick/second ingredients` (nombre con espacio incluido). Las comillas son necesarias para que la shell lo interprete como un único argumento:
 
-Se encontró el archivo `/home/rick/second ingredients` (nombre con
-espacio incluido). Las comillas son necesarias para que la terminal
-interprete el nombre como un único argumento: sudo less “/home/rick/second ingredients”
+```bash
+sudo less "/home/rick/second ingredients"
+```
 
+### Distractor: rabbit hole en el código fuente del portal
 
-### Distractor: comentario en el código fuente del portal
+El código fuente de `portal.php` contenía un comentario con una cadena codificada en base64. Tras decodificarla **7 veces** consecutivas en CyberChef:
 
-El código fuente de `portal.php` contenía un comentario con una
-cadena codificada en base64. Tras decodificarla **7 veces**
-consecutivas en CyberChef, el resultado fue `rabbit hole` — una
-pista intencional del creador de la sala indicando que ese camino
-era un distractor. Es una técnica común en CTFs para consumir
-tiempo del atacante.
+![CyberChef mostrando "rabbit hole" como resultado final tras 7 decodificaciones](img/05-rabbit-hole.png)
+
+El resultado fue `rabbit hole` — pista intencional del creador de la sala indicando que ese camino era un distractor. Técnica común en CTFs para consumir tiempo del atacante.
+
+---
 
 ## 6. Ingrediente 3
 
-El tercer ingrediente estaba en la carpeta de root, accesible
-gracias a los permisos de sudo irrestrictos:
+El tercer ingrediente estaba en la carpeta de root, accesible gracias a los permisos de sudo irrestrictos:
 
+```bash
 sudo ls /root
 sudo less /root/3rd.txt
+```
 
+---
+
+## Lo que probé y no funcionó
+
+- **SSH con las credenciales del comentario HTML**: el servidor rechaza autenticación por contraseña (`Permission denied (publickey)`). SSH estaba activo pero no era el vector.
+- **Gobuster para encontrar login.php y portal.php**: ninguna de las dos wordlists (`common.txt`, `big.txt`) encontró las páginas PHP relevantes. Rutas con nombres específicos del contexto no aparecen en listas genéricas.
+- **Rabbit hole de base64**: el comentario en `portal.php` con cadena base64 parecía una pista. Decodificar 7 veces en CyberChef devolvió `rabbit hole` — distractor intencional.
+
+---
+
+## Impacto
+
+Un atacante sin credenciales puede comprometer el servidor completo desde la red leyendo únicamente el código fuente HTML y `robots.txt`. Ambas fuentes son accesibles públicamente sin autenticación. Desde el panel RCE, `www-data` tiene sudo ilimitado, lo que equivale a root inmediato. No se necesita ninguna CVE, exploit ni código personalizado.
+
+---
+
+## Perspectiva defensiva
+
+- **Nunca incluir credenciales en comentarios HTML ni en `robots.txt`**: ambos son archivos públicos. Un comentario HTML invisible en el navegador es visible para cualquier visitante que revise el código fuente.
+- **No implementar paneles de ejecución de comandos del sistema en aplicaciones web**: si es absolutamente necesario, usar listas blancas estrictas de comandos permitidos, nunca listas negras.
+- **`sudo (ALL) NOPASSWD: ALL` es la configuración más peligrosa posible**: equivale a dar acceso root completo sin autenticación a cualquier proceso que corra con ese usuario. Aplicar principio de mínimo privilegio.
+- **Proteger paneles de administración con autenticación multifactor** y no exponerlos en rutas predecibles.
+
+---
 
 ## Lecciones aprendidas
 
-- Los comentarios HTML son invisibles en el navegador pero
-  completamente legibles en el código fuente. Nunca incluir
-  credenciales, rutas internas ni información sensible en
-  comentarios de páginas web públicas.
-- `robots.txt` es un archivo público — cualquier dato incluido
-  ahí es accesible para cualquier visitante, no solo para
-  buscadores.
-- Un Command Panel que ejecuta input del usuario directamente
-  en el sistema operativo es una vulnerabilidad de RCE crítica,
-  independientemente de la lista negra de comandos que tenga.
-- Los filtros de lista negra son siempre eludibles. La forma
-  correcta de prevenir RCE es no ejecutar input del usuario como
-  comandos del sistema, no intentar filtrar comandos específicos.
-- `sudo (ALL) NOPASSWD: ALL` es la configuración de sudo más
-  peligrosa posible — equivale a dar acceso root completo sin
-  autenticación a cualquier proceso que corra con ese usuario.
-- Gobuster no es exhaustivo: solo encuentra rutas que están en
-  su wordlist. Rutas con nombres específicos del contexto
-  requieren prueba manual o wordlists especializadas.
-- Archivos con espacios en el nombre requieren comillas en la
-  terminal para ser interpretados como un solo argumento.
-- Los "rabbit holes" son distractores intencionales en CTFs —
-  reconocerlos a tiempo ahorra mucho esfuerzo.
+- El código fuente HTML y `robots.txt` son las primeras cosas a revisar en cualquier servidor web — revelan información que el navegador oculta visualmente.
+- Gobuster no es exhaustivo: solo encuentra rutas que están en su wordlist. Rutas con nombres específicos del contexto requieren exploración manual.
+- Los filtros de lista negra son un control de seguridad débil. `less`, `tac` y `grep .` son equivalentes funcionales de `cat` que evitan filtros simples.
+- Reconocer un rabbit hole a tiempo ahorra esfuerzo: si una pista parece demasiado elaborada sin resultados concretos, considerar que sea intencional.
+- `sudo (ALL) NOPASSWD: ALL` en un usuario de servidor web es acceso root inmediato para cualquier atacante que comprometa ese proceso.
 
-## Mitigaciones (perspectiva defensiva)
-
-- Nunca incluir credenciales ni información sensible en
-  comentarios HTML, `robots.txt` ni ningún archivo público.
-- No implementar paneles de ejecución de comandos del sistema
-  en aplicaciones web. Si es absolutamente necesario, usar
-  listas blancas estrictas de comandos permitidos, no listas
-  negras.
-- Configurar sudo con el principio de mínimo privilegio:
-  solo los comandos estrictamente necesarios, nunca `ALL`.
-- Usar contraseñas robustas para paneles de administración y
-  protegerlos con autenticación multifactor.
+---
 
 ## Referencias
 
 - [TryHackMe — Pickle Rick](https://tryhackme.com/room/picklerick)
 - [OWASP — Command Injection](https://owasp.org/www-community/attacks/Command_Injection)
+- [GTFOBins](https://gtfobins.github.io/)
