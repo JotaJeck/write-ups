@@ -160,7 +160,6 @@ Un atacante externo sin credenciales puede obtener shell de root en tres pasos: 
 - **Usar lista blanca de extensiones** en vez de lista negra: permitir solo `.jpg`, `.png`, etc., y rechazar todo lo demás. Una lista negra siempre puede tener vacios.
 - **Renombrar los archivos subidos** con nombres aleatorios y sin extensión ejecutable, independientemente de lo que el usuario suba.
 - **Almacenar los archivos subidos fuera del directorio web**: si los archivos no son accesibles por URL, ejecutarlos desde el navegador es imposible.
-
 - **No asignar SUID a intérpretes de lenguajes** (Python, Perl, Ruby): cualquiera de ellos con SUID es escalada directa a root. Verificar regularmente binarios con SUID inusuales con `find / -perm -4000 -type f`.
 - **Bloquear conexiones salientes no autorizadas** desde el servidor web: un firewall que limite las conexiones salientes impediría que la reverse shell se conectara al atacante incluso si el archivo fuera ejecutado.
 
