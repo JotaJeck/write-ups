@@ -175,7 +175,7 @@ Entre los binarios estándar del sistema, `/usr/bin/menu` era el único inusual 
 
 ### PATH Hijacking
 
-El binario ejecutaba los comandos `curl`, `uname` e `ifconfig` **sin ruta absoluta** (solo el nombre del comando, sin `/usr/bin/curl`). Esto lo hace vulnerable a PATH hijacking.
+Al menos la opción 1 ejecuta `curl` **sin ruta absoluta** (solo el nombre del comando, sin `/usr/bin/curl`). Es probable que las otras opciones (`uname`, `ifconfig`) tengan el mismo problema, pero solo se verificó la opción 1 directamente. Esto lo hace vulnerable a PATH hijacking.
 
 Cuando Linux busca un comando sin ruta completa, recorre las carpetas del `$PATH` en orden. Si se agrega una carpeta propia **al inicio** del PATH y se crea un archivo con el mismo nombre del comando buscado, Linux lo encuentra primero y lo ejecuta — heredando los privilegios del binario SUID (root en este caso).
 
@@ -210,6 +210,7 @@ Un atacante externo sin credenciales puede obtener shell de root encadenando cua
 ## Perspectiva defensiva
 
 - **Deshabilitar el módulo mod_copy de ProFTPD** si no es necesario, o actualizar a una versión posterior a 1.3.5 donde está parcheado. Los módulos de FTP que no se usan deben desactivarse explícitamente.
+- **No exportar directorios sensibles por NFS**, especialmente carpetas que puedan contener claves SSH o archivos del sistema. `/var` contiene datos del sistema operativo y no debería ser exportado en ninguna configuración de producción.
 - **Restringir el acceso NFS por IP** en lugar de usar `*`: solo las IPs que necesitan el montaje deben poder acceder.
 - **No incluir shares SMB anónimos con información sensible**: el acceso anónimo SMB debería limitarse a lo estrictamente necesario, y nunca exponer rutas de claves SSH o configuraciones de servicios.
 - **Los binarios SUID siempre deben usar rutas absolutas** para llamar a otros programas. Un binario SUID que llama a `curl` en vez de `/usr/bin/curl` es PATH hijacking esperando ocurrir.
