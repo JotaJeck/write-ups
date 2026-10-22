@@ -1,6 +1,6 @@
 # Pickle Rick — TryHackMe (Fácil)
 
-**Plataforma:** TryHackMe · **Categoría:** Reconocimiento web / Análisis de código fuente / Command Injection / PrivEsc · **Herramientas:** Nmap, Gobuster, curl, CyberChef, navegador web
+**Plataforma:** TryHackMe · **Categoría:** Reconocimiento web / Análisis de código fuente / RCE / PrivEsc · **Herramientas:** Nmap, Gobuster, curl, CyberChef, navegador web
 
 ---
 
@@ -16,7 +16,7 @@ Máquina Linux temática de Rick and Morty con foco completamente web. Las crede
 - Enumeración de directorios web con Gobuster
 - Análisis de código fuente HTML para extraer credenciales expuestas en comentarios
 - Lectura de `robots.txt` como fuente de información sensible
-- Identificación y explotación de Command Injection / RCE en panel web
+- Identificación y explotación de RCE mediante panel de comandos inseguro
 - Evasión de filtros de lista negra usando comandos alternativos (`less`, `tac`, `grep`)
 - Escalada de privilegios mediante `sudo (ALL) NOPASSWD: ALL`
 - Reconocimiento de rabbit holes (distractores intencionales) en CTFs
@@ -68,7 +68,13 @@ gobuster dir -u http://<IP>/ -w /usr/share/wordlists/dirb/big.txt
 
 ![Gobuster completo: /assets (301) y /robots.txt (200)](img/02-gobuster.png)
 
-Gobuster encontró `/assets` y `/robots.txt`, pero **no encontró `login.php` ni `portal.php`**. Esto confirma que Gobuster depende completamente de la wordlist — rutas con nombres específicos del contexto no aparecen en listas genéricas. Fueron descubiertas probando rutas comunes manualmente en el navegador.
+Gobuster encontró `/assets` y `/robots.txt`, pero **no encontró `login.php` ni `portal.php`**. La razón no es que las palabras "login" y "portal" no estén en la lista — están en `big.txt`. El problema es que Gobuster, por defecto, busca rutas sin extensión. Para encontrar archivos `.php` hay que agregar `-x php`:
+
+```bash
+gobuster dir -u http://<IP>/ -w /usr/share/wordlists/dirb/big.txt -x php
+```
+
+No usé `-x php` en este escaneo, así que los archivos PHP no aparecieron. Los encontré navegando manualmente a rutas comunes. **Lección real: siempre incluir `-x` con las extensiones del stack objetivo.**
 
 ---
 
@@ -162,21 +168,20 @@ sudo less /root/3rd.txt
 ## Lo que probé y no funcionó
 
 - **SSH con las credenciales del comentario HTML**: el servidor rechaza autenticación por contraseña (`Permission denied (publickey)`). SSH estaba activo pero no era el vector.
-- **Gobuster para encontrar login.php y portal.php**: ninguna de las dos wordlists (`common.txt`, `big.txt`) encontró las páginas PHP relevantes. Rutas con nombres específicos del contexto no aparecen en listas genéricas.
+- **Gobuster sin `-x php`**: usé `big.txt` sin especificar extensiones. "login" y "portal" sí están en la lista, pero Gobuster busca rutas sin extensión por defecto — `login.php` no aparece si no se pasa `-x php`. Error de flags, no de wordlist.
 - **Rabbit hole de base64**: el comentario en `portal.php` con cadena base64 parecía una pista. Decodificar 7 veces en CyberChef devolvió `rabbit hole` — distractor intencional.
 
 ---
 
 ## Impacto
 
-Un atacante sin credenciales puede comprometer el servidor completo desde la red leyendo únicamente el código fuente HTML y `robots.txt`. Ambas fuentes son accesibles públicamente sin autenticación. Desde el panel RCE, `www-data` tiene sudo ilimitado, lo que equivale a root inmediato. No se necesita ninguna CVE, exploit ni código personalizado.
+Un atacante sin credenciales puede comprometer el servidor completo desde la red leyendo el código fuente HTML y `robots.txt`, y descubriendo la página de login (navegación manual o Gobuster con `-x php`). Ambas fuentes son accesibles públicamente sin autenticación. Desde el panel RCE, `www-data` tiene sudo ilimitado, lo que equivale a root inmediato. No se necesita ninguna CVE, exploit ni código personalizado.
 
 ---
 
 ## Perspectiva defensiva
 
 - **Nunca incluir credenciales en comentarios HTML ni en `robots.txt`**: ambos son archivos públicos. Un comentario HTML invisible en el navegador es visible para cualquier visitante que revise el código fuente.
-- **No implementar paneles de ejecución de comandos del sistema en aplicaciones web**: si es absolutamente necesario, usar listas blancas estrictas de comandos permitidos, nunca listas negras.
 - **`sudo (ALL) NOPASSWD: ALL` es la configuración más peligrosa posible**: equivale a dar acceso root completo sin autenticación a cualquier proceso que corra con ese usuario. Aplicar principio de mínimo privilegio.
 - **Proteger paneles de administración con autenticación multifactor** y no exponerlos en rutas predecibles.
 
@@ -185,7 +190,7 @@ Un atacante sin credenciales puede comprometer el servidor completo desde la red
 ## Lecciones aprendidas
 
 - El código fuente HTML y `robots.txt` son las primeras cosas a revisar en cualquier servidor web — revelan información que el navegador oculta visualmente.
-- Gobuster no es exhaustivo: solo encuentra rutas que están en su wordlist. Rutas con nombres específicos del contexto requieren exploración manual.
+- Gobuster requiere `-x` para encontrar archivos con extensión: `login.php` no aparece aunque "login" esté en la lista, a menos que se pase `-x php`. Siempre incluir las extensiones del stack objetivo (`-x php`, `-x php,txt`, etc.).
 - Los filtros de lista negra son un control de seguridad débil. `less`, `tac` y `grep .` son equivalentes funcionales de `cat` que evitan filtros simples.
 - Reconocer un rabbit hole a tiempo ahorra esfuerzo: si una pista parece demasiado elaborada sin resultados concretos, considerar que sea intencional.
 - `sudo (ALL) NOPASSWD: ALL` en un usuario de servidor web es acceso root inmediato para cualquier atacante que comprometa ese proceso.
