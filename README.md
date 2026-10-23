@@ -36,7 +36,7 @@ mitigaciones.
 
 | Sala | Dificultad | Técnicas |
 |------|-----------|----------|
-| [Linux PrivEsc](tryhackme.com/room/linuxprivesc) | Media | sudo escapes, LD_PRELOAD/LD_LIBRARY_PATH, cron (script write/PATH/wildcard), SUID (MySQL UDF/exim CVE-2016-1531/SO injection/PATH hijacking/bash function export/PS4 debugging), credenciales expuestas, SSH key expuesta, NFS no_root_squash, Dirty COW CVE-2016-5195 |
+| [Linux PrivEsc](tryhackme/medium/linux-privesc/) | Media | sudo escapes, LD_PRELOAD/LD_LIBRARY_PATH, cron (script write/PATH/wildcard), SUID (MySQL UDF/exim CVE-2016-1531/SO injection/PATH hijacking/bash function export/PS4 debugging), credenciales expuestas, SSH key expuesta, NFS no_root_squash, Dirty COW CVE-2016-5195 |
 
 ## Herramientas
 
