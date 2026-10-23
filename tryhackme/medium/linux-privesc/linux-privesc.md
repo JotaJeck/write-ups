@@ -637,6 +637,61 @@ Estas herramientas son el punto de partida en cualquier engagement real: identif
 
 ---
 
+## Lo que probé y no funcionó
+
+**Task 16 — `less` en terminal no interactiva:** Al ejecutar `cat ~/.*history | less`, el terminal mostró `WARNING: terminal is not fully functional` porque la sesión SSH no tenía un terminal completamente interactivo. `less` requiere control del terminal para paginar. El historial igual era legible navegando con RETURN, pero es más directo usar directamente `cat ~/.*history` sin pipear a `less`.
+
+---
+
+## Impacto
+
+Una máquina con cualquiera de estos vectores abiertos en producción representa un riesgo crítico. El escenario más realista no es que un atacante explote los 20 vectores — basta con uno. Con acceso inicial como usuario sin privilegios (por ejemplo, vía una aplicación web vulnerable o credenciales filtradas), un atacante puede:
+
+- **Leer cualquier archivo del sistema**, incluyendo `/etc/shadow`, claves SSH privadas, configuraciones de servicios y bases de datos internas.
+- **Instalar backdoors persistentes** — crear usuarios con UID 0, agregar claves SSH autorizadas en `/root/.ssh/authorized_keys`, plantar tareas cron como root.
+- **Moverse lateralmente** usando las credenciales encontradas (historial, archivos de configuración) contra otros sistemas de la red.
+- **Destruir evidencia** — borrar logs en `/var/log/`, limpiar el historial de bash, modificar timestamps.
+- **Ransomware o exfiltración** — con acceso root tiene acceso irrestricto a todos los datos del sistema.
+
+La mayoría de estos vectores no requieren herramientas sofisticadas ni exploits de día cero — solo conocer las misconfiguraciones más comunes y saber dónde buscarlas.
+
+---
+
+## Perspectiva defensiva
+
+**sudo:**
+- Auditar `/etc/sudoers` y eliminar permisos innecesarios. Ningún usuario debería tener `NOPASSWD` sobre binarios que permiten shell escape (find, vim, awk, ftp, nmap).
+- No preservar `LD_PRELOAD` ni `LD_LIBRARY_PATH` en sudo (`env_reset` por defecto los elimina — verificar que no estén en `env_keep`).
+
+**Binarios SUID:**
+- `find / -perm -4000 -type f 2>/dev/null` — auditar regularmente. Cualquier binario SUID personalizado es una señal de alerta.
+- Los binarios SUID siempre deben llamar a otros programas con rutas absolutas.
+- Mantener el software actualizado: exim CVE-2016-1531 tiene parche desde 2016.
+
+**Tareas cron:**
+- Los scripts ejecutados por root no deben tener permisos de escritura para otros usuarios (`chmod 755` o más restrictivo).
+- Usar rutas absolutas en los scripts de cron.
+- Evitar `tar *` o cualquier wildcard en scripts ejecutados como root.
+
+**Credenciales:**
+- Nunca pasar contraseñas como argumentos de línea de comandos — quedan en el historial de bash. Usar archivos de configuración con permisos `600` o variables de entorno.
+- Los archivos de autenticación de servicios (`auth.txt`, `.ovpn`) deben tener permisos restrictivos y no deben estar en directorios accesibles por usuarios sin privilegios.
+
+**Claves SSH:**
+- Las claves privadas (`id_rsa`, `root_key`) deben tener permisos `600` y pertenecer solo al usuario correspondiente.
+- No almacenar claves privadas de root en ubicaciones accesibles desde sesiones de usuario normal.
+
+**NFS:**
+- Nunca exportar directorios con `no_root_squash` a menos que sea estrictamente necesario.
+- Restringir acceso NFS por IP (`192.168.1.0/24` en lugar de `*`).
+- No exportar directorios que contengan datos sensibles o que sean escribibles.
+
+**Kernel:**
+- Mantener el kernel actualizado. Dirty COW (CVE-2016-5195) fue parcheado en octubre de 2016 — una máquina vulnerable en producción hoy indica falta de política de actualizaciones.
+- Considerar módulos de seguridad como AppArmor o SELinux para limitar lo que los procesos pueden hacer incluso con root.
+
+---
+
 ## Conclusión
 
 Esta room demuestra la amplitud del campo de escalada de privilegios en Linux. Los vectores cubiertos van desde errores de configuración simples (permisos de escritura en scripts de cron, credenciales en texto plano) hasta técnicas más sofisticadas (wildcard injection, function export en bash, vulnerabilidades de kernel). En un engagement real, la combinación de enumeración automática con herramientas como linpeas y análisis manual de los resultados es el enfoque más efectivo para identificar el camino de menor resistencia hacia root.
