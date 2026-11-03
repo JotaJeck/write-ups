@@ -12,7 +12,8 @@ Cada write-up sigue una estructura consistente:
 2. **Enumeración** — descubrimiento de rutas, tecnologías y datos
 3. **Explotación / Foothold** — acceso inicial
 4. **Escalada de privilegios** — de usuario a root/admin
-5. **Lecciones aprendidas**
+5. **Perspectiva defensiva** — mitigaciones y cómo se previene cada hallazgo
+6. **Lecciones aprendidas**
 
 ## Write-ups
 
@@ -34,8 +35,8 @@ Cada write-up sigue una estructura consistente:
 
 | Sala | Dificultad | Técnicas |
 |------|-----------|----------|
-| [Linux PrivEsc](tryhackme/medium/LinuxPrivEsc/) | Media | Sudo misconfig, SUID/SGID, cron (PATH/wildcard injection), LD_PRELOAD, exploits SUID (MySQL UDF, exim CVE-2016-1531), John the Ripper, linpeas/LinEnum |
-| [Gestión de Vulnerabilidades](tryhackme/medium/GestionVulnerabilidades/) | Media | Nessus Essentials, OpenVAS/GVM (Docker), Nmap + NSE, Nikto, caso SOC MS17-010, Schedules/Alerts, troubleshooting Docker vs. Podman |
+| [Linux PrivEsc](tryhackme/medium/linux-privesc/) | Media | Sudo misconfig, SUID/SGID, cron (PATH/wildcard injection), LD_PRELOAD, exploits SUID (MySQL UDF, exim CVE-2016-1531), John the Ripper, linpeas/LinEnum |
+| [Gestión de Vulnerabilidades](tryhackme/medium/gestion-vulnerabilidades/) | Media | Nessus Essentials, OpenVAS/GVM (Docker), Nmap + NSE, Nikto, caso SOC MS17-010, Schedules/Alerts, troubleshooting Docker vs. Podman |
 
 ## Herramientas
 

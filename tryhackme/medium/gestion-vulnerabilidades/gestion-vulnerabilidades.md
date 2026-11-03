@@ -193,10 +193,11 @@ Ejercicio tipo SOC analyst: interpretar un reporte ya generado (sin correr el sc
 | Vulnerabilidad de mayor severidad | **MS17-010** (CVSS 9.3, puerto 445/tcp) |
 | Primer SO afectado listado | Microsoft Windows 10 x32/x64 Edition |
 | Método de detección | Envío de un SMB transaction request manipulado (fid = 0), verificando la respuesta |
+| EPSS (CVE-2017-0144, consultado en la API de FIRST) | **0.9923** (percentil 99.94) |
 
 ![Detalle del hallazgo High (CVSS 9.3) correspondiente a MS17-010, con el listado de SO afectados y el método de detección](img/openvas-ms17-010.png)
 
-**MS17-010** es la vulnerabilidad de SMBv1 detrás de EternalBlue/WannaCry — un ejemplo real de **CVSS alto + explotabilidad masiva en el mundo real (equivalente a un EPSS altísimo)**, exactamente el tipo de hallazgo que un motor de priorización bien diseñado debería poner en el tope de cualquier lista de remediación.
+**MS17-010** es la vulnerabilidad de SMBv1 detrás de EternalBlue/WannaCry. No es solo un CVSS alto en el papel: consultando la API de EPSS (FIRST) para **CVE-2017-0144**, el score es **0.9923** — es decir, un 99.23% de probabilidad estimada de explotación en los próximos 30 días, ubicado en el **percentil 99.94** de todos los CVEs existentes. Es exactamente el caso que justifica combinar CVSS con EPSS en un motor de priorización: el impacto técnico (CVSS 9.3) y la explotabilidad real observada en el mundo (EPSS ≈ 1.0) apuntan en la misma dirección, así que este hallazgo debería ir al tope de cualquier lista de remediación sin necesidad de más contexto.
 
 ---
 
